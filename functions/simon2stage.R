@@ -1,6 +1,7 @@
 run_simon2stage <- function(data,
                              design_para,
-                             suspend_threshold = NULL)
+                             suspend_threshold = NULL,
+                             suspend_window = 30)
 {
   # check if design parameters are complete
   check <- sapply(c("r1","r2","n1","N"), function(i) is.null(design_para[[i]]))
@@ -26,11 +27,19 @@ run_simon2stage <- function(data,
       stop("Need to supply toxicity data if want to implement dose modification!")
     } else
     {
-      data_tox <- data$data_ph2_DLT[1:N,] |> as.matrix()
-      tmp <- first_crossing(data_tox,suspend_threshold)
-      suspend_tox <- !is.na(tmp)
+      data_tox <- data$data_ph2_DLT[1:N,] 
+      idx <- lapply(data_tox, function(col)
+        {
+        cummean <- cumsum(col)/seq_along(col)
+        idx <- which(cummean > suspend_threshold)
+        idx <- idx[idx>=suspend_window]
+        if(length(idx) > 0) idx <- min(idx)
+      })
+      suspend_tox <- sapply(idx, function(i) length(i) >0)
       # see when the trial is suspended due to excess toxicity for each dose
-      when_suspend_tox[suspend_tox] <- tmp[suspend_tox]
+      when_suspend_tox[suspend_tox] <- idx |>
+        unlist() |>
+        as.numeric()
     }
   }
   # if stopped for futility after 1st stage
@@ -88,26 +97,19 @@ simon2stage_design <- function(p0 = NULL,
 
 # helper function to track the cumulative mean as you move down rows,
 # and find the first row index where it exceeds threshold X.
-first_crossing <- function(mat, threshold) {
-  N <- nrow(mat)
-  p <- ncol(mat)
-  cross_at <- rep(NA, p)
-  
-  # Loop over columns
-  for (j in 1:p) {
-    cum_means <- cumsum(mat[, j]) / seq_len(N)
-    idx <- which(cum_means > threshold)[1]  # first crossing
-    if (!is.na(idx)) {
-      cross_at[j] <- idx
-    }
-  }
-  
-  return(cross_at)
-}
-
-# Example
-set.seed(123)
-mat <- matrix(rbinom(50, 1, 0.3), ncol = 5)  # 10 rows × 5 columns
-threshold <- 0.4
-first_crossing(mat, threshold)
-
+# first_crossing <- function(mat, threshold) {
+#   N <- nrow(mat)
+#   p <- ncol(mat)
+#   cross_at <- rep(NA, p)
+#   
+#   # Loop over columns
+#   for (j in 1:p) {
+#     cum_means <- cumsum(mat[, j]) / seq_len(N)
+#     idx <- which(cum_means > threshold)[1]  # first crossing
+#     if (!is.na(idx)) {
+#       cross_at[j] <- idx
+#     }
+#   }
+#   
+#   return(cross_at)
+# }

@@ -287,24 +287,68 @@ ggpubr::ggarrange(p1,p2,ncol=1,nrow=2)
 We first supply clinical information to get design parameters for the Simon's two-stage design
 
 ```{r}
+source("functions/simon2stage.R")
 design_para <- simon2stage_design(p0=0.35,
                                   p1=0.45)
 ```
 
 ```{r}
+# noTS: no toxicity induced trial suspension
 res_ph2_simon2stage <- vector(mode = "list",length = length(drug_data))
 for (i in 1:length(drug_data))
 {
   res <- run_simon2stage(
   data = drug_data[[i]],
-  design_para = design_para)
+  design_para = design_para,
+  suspend_threshold = 0.3,
+  suspend_window = 30)
   
   res_ph2_simon2stage[[i]] <- res
 }
+#save(res_ph2_simon2stage,file = paste0("results/res_ph2_",drug_family,"_simon2stage_TS30.RData"))
 ```
 
 ## Combine Phase I-II results
 
 ```{r}
-
+# extract RP2D from Phase I results
+RP2D_CRM <- sapply(res_ph1_CRM,function(x) x$RP2D)
+RP2D_EffTox <- sapply(res_ph1_EffTox, function(x) x$RP2D)
 ```
+
+
+### Probability of overall success
+
+```{r}
+ph2_success_per_dose <- t(sapply(res_ph2_simon2stage, function(i) i$reject_H0))
+# see the conditional phase II result given Phase I dose selection
+res_ph12_CRM <- rep(NA,length(RP2D_CRM))
+idx <- !is.na(RP2D_CRM)
+res_ph12_CRM[idx] <- ph2_success_per_dose[cbind(which(idx),RP2D_CRM[idx])]
+power_ph12_CRM <- mean(res_ph12_CRM,na.rm = TRUE)
+cat("The combined Phase I-II success rate for CRM is ",power_ph12_CRM,"\n")
+
+res_ph12_EffTox <- rep(NA,length(RP2D_EffTox))
+idx <- !is.na(RP2D_EffTox)
+res_ph12_EffTox[idx] <- ph2_success_per_dose[cbind(which(idx),RP2D_EffTox[idx])]
+power_ph12_EffTox <- mean(res_ph12_EffTox,na.rm = TRUE)
+cat("The combined Phase I-II success rate for EffTox is ",power_ph12_EffTox,"\n")
+```
+### Probability of trial suspension due to excess toxicity
+
+```{r}
+ph2_suspension_per_dose <- t(sapply(res_ph2_simon2stage, function(i) i$suspend_tox))
+# see the conditional phase II result given Phase I dose selection
+res_ph12_CRM <- rep(NA,length(RP2D_CRM))
+idx <- !is.na(RP2D_CRM)
+res_ph12_CRM[idx] <- ph2_suspension_per_dose[cbind(which(idx),RP2D_CRM[idx])]
+TS_ph12_CRM <- mean(res_ph12_CRM,na.rm = TRUE)
+cat("The Phase II suspesion rate due to excess toxicity for CRM is ",TS_ph12_CRM,"\n")
+
+res_ph12_EffTox <- rep(NA,length(RP2D_EffTox))
+idx <- !is.na(RP2D_EffTox)
+res_ph12_EffTox[idx] <- ph2_suspension_per_dose[cbind(which(idx),RP2D_EffTox[idx])]
+TS_ph12_EffTox <- mean(res_ph12_EffTox,na.rm = TRUE)
+cat("The Phase II suspesion rate due to excess toxicity for EffTox is ",TS_ph12_EffTox,"\n")
+```
+
