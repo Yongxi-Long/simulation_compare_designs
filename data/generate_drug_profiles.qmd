@@ -1,0 +1,639 @@
+---
+title: "Generate drug profiles for simulation"
+author: "Yongxi Long"
+format: 
+  html:
+    self-contained: true
+editor: visual
+---
+
+## Aim
+
+This is to generate different drug profiles where the dose-efficacy curves follow/do not follow the conventional monotonicity assumption
+
+```{r,warning=FALSE,echo=FALSE}
+rm(list = ls())
+suppressPackageStartupMessages(
+  {
+    library(ggplot2)
+    library(dplyr)
+    library(ggpubr)
+    library(simsurv)
+  }
+)
+source("data_generating_functions.R")
+```
+
+## Function skeletons
+
+1.  For toxicity, we use more a monotonic function, the scaled logistic:
+
+$$P(Y=1\mid d) = L \frac{1-e^{-kd}}{1-e^{-k}}$$
+
+-   $k$ adjusts the curve growth rate.
+
+2.  For response and survival, we use an S-shaped skeleton to obtain a plateau:
+
+$$P(Y=1\mid d) = L \frac{d^a}{d^a+(1-d)^b}$$
+
+a and b are shape control parameters:
+
+-   if a=b, the S-curve is symmetric around d = 0.5
+
+-   if $a<b$, the S-curve rises faster initially, otherwise the curve starts very flat and rises more at the end.
+
+-   For dose-survival, we first obtain some value between 0 and 1 from the above function, then scale them by some constant to have proper units (e.g., days, months, years). We also add an offset to make sure that the survival time at dose zero is a positive value (otherwise it will be zero).
+
+3.  For non-monotonic response and survival, we use an umbrella-shaped skeleton to achieve decreasing efficacy after some dose level
+
+$$P(Y=1\mid d) = ad^2 + bd = (\frac{-L}{D^2})d^2 + (\frac{2L}{D})d$$
+
+-   The function plateaus at $D=-\frac{b}{2a}$, and the peak value is $L=-\frac{b^2}{4a}$
+
+```{r}
+# scaled logistic function
+scaled_logistic_curve <- function(d,k,L)
+{
+  sapply(d, function(d)
+    {
+    L*(1-exp(-k*d))/(1-exp(-k))
+  })
+}
+# functions to obtain Sigmoid-like curve 
+sigmoid_curve <- function(d,a,b,L,
+                    scale = 1, offset = 0)
+{
+  sapply(d, function(d)
+    {
+    sapply(d, function(d) 
+      {
+     scale*(L*d^a / (d^a + (1 - d)^b)) + offset
+    })
+  })
+}
+# function to obtain umbrella-like curve
+umbrella_curve <- function(d,D,L,scale=1,offset=0)
+{
+  sapply(d, function(d)
+    {
+    scale*((-L/D^2)*d^2+(2*L/D)*d) + offset
+  })
+}
+```
+
+## Immuno-like drug profiles
+
+In this type of drug profiles (immuno/targeted therapies), the efficacy curves plateau before MTD. Namely, the optimal biological dose is smaller than the maximum tolerable dose (@fig-dose-tox-rsp-surv). We set $a<b$ for dose-response, dose-survival curves to achieve this. For dose-(median) survival curve, we add scale and offset parameter in the function to make the survival time in proper range and has a minimum positive value.
+
+```{r}
+set.seed(86)
+# target DLT for MTD
+target_DLT <- 0.3
+# number of curves to simulate
+ncurve <- 1e2
+# maximum DLT rate
+max_DLT <- runif(ncurve,min=0.7,max=0.8)
+# maximum response rate
+max_ORR = runif(ncurve,min=0.4,max=0.5)
+# maximum survival (will be scaled)
+max_OS <- runif(n=ncurve,min=0.4,max = 0.6)
+# dose sequence
+d <- seq(0,1,by=0.01)
+# for tox curve
+k_values_tox <- runif(n=ncurve,min = -5,max=-2)
+# for response curve, a < b
+a_values_rsp <- runif(n=ncurve,min=1,max = 3)
+b_values_rsp <- runif(n=ncurve,min=5,max = 7)
+# for survival curve, a < b
+# scale such that maximum median survival is on the right scale
+# offset so the minimum median survival with dose 0 is X (months)
+a_values_surv <- runif(n=ncurve,min=0.1,max = 1)
+b_values_surv <- runif(n=ncurve,min=4,max = 6)
+scale_surv <- 20
+offset_surv <- 8
+```
+
+```{r,echo=FALSE,warning=FALSE}
+#| label: fig-dose-tox-rsp-surv
+#| fig-width: 7
+#| fig-height: 5
+#| fig-align: center
+#| fig-cap: "Illustration of the dose-response and the dose-toxicity curves (left) and the dose-survival curve (right)."
+tox_df <- data.frame(
+  dose = rep(d,ncurve)
+)
+tox_df$rate <- sapply(1:ncurve, function(i)
+  {
+  scaled_logistic_curve(d,k=k_values_tox[i],L=max_DLT[i])
+}) |>
+  unlist() |>
+  as.vector()
+tox_df$type <- "dose-toxicity"
+rsp_df <-  data.frame(
+  dose = rep(d,ncurve)
+)
+rsp_df$rate <- sapply(1:ncurve, function(i)
+  {
+  sigmoid_curve(d,a=a_values_rsp[i],b=b_values_rsp[i],L=max_ORR[i])
+}) |> 
+  unlist() |>
+  as.vector()
+rsp_df$type <- "dose-response"
+surv_df <-  data.frame(
+  dose = rep(d,ncurve)
+)
+surv_df$rate <- sapply(1:ncurve, function(i)
+  {
+  sigmoid_curve(d,a=a_values_surv[i],b=b_values_surv[i],L=max_OS[i],
+          scale = scale_surv, offset = offset_surv)
+}) |> 
+  unlist() |>
+  as.vector()
+surv_df$type <- "dose-survival"
+df <- rbind(tox_df,rsp_df,surv_df)
+df$id <- rep(1:(3*ncurve),
+             each=length(d))
+p1 <- df |>
+  filter(type!="dose-survival") |>
+ggplot(aes(x=dose,y=rate,
+                  group = id,color=type))+
+  geom_line()+
+  theme_bw()+
+  geom_hline(yintercept = target_DLT,color="darkgrey",linetype=2,
+             lwd=1)+
+  ylim(c(0,1))+
+  xlim(c(0,1))+
+  scale_color_manual(
+    values = c("#b84b2d","#646c94")
+  )+
+  labs(x="% of maximum dose",y="Rate",color="Type")+
+  theme(
+    legend.position = "bottom"
+  )
+
+p2 <- df |>
+  filter(type=="dose-survival") |>
+ggplot(aes(x=dose,y=rate,
+                  group = id,color=type))+
+  geom_line()+
+  theme_bw()+
+  xlim(c(0,1))+
+  scale_color_manual(
+    values = c("orange2")
+  )+
+  labs(x="% of maximum dose",y="Median OS",color="Type")+
+  theme(
+    legend.position = "bottom"
+  )
+profile_immuno <- ggarrange(p1,p2,ncol=2)
+```
+
+## Chemo-like drug profiles
+
+In this type of drug profiles (chemo therapies), the efficacy curves increase with dose and usually plateau after MTD. Namely, increasing to MTD also means increasing efficacy (@fig-dose-tox-rsp-surv-2)
+
+```{r}
+set.seed(86)
+# target DLT for MTD
+target_DLT <- 0.3
+# number of curves to simulate
+ncurve <- 1e2
+# maximum DLT rate
+max_DLT <- runif(ncurve,min=0.7,max=0.8)
+# maximum response rate
+max_ORR = runif(ncurve,min=0.5,max=0.6)
+# maximum survival (will be scaled)
+max_OS <- runif(n=ncurve,min=0.4,max = 0.6)
+# dose sequence
+d <- seq(0,1,by=0.01)
+# for tox curve
+k_values_tox <- runif(n=ncurve,min = -5,max=-2)
+# for response curve, a > b
+a_values_rsp <- runif(n=ncurve,min=3,max = 5)
+b_values_rsp <- runif(n=ncurve,min=2,max = 4)
+# for survival curve, a > b
+# scale such that maximum median survival is on the right scale
+# offset so the minimum median survival with dose 0 is X (months)
+a_values_surv <- runif(n=ncurve,min=2,max = 5)
+b_values_surv <- runif(n=ncurve,min=1.5,max = 2.5)
+scale_surv <- 22
+offset_surv <- 8
+```
+
+```{r,echo=FALSE,warning=FALSE}
+#| label: fig-dose-tox-rsp-surv-2
+#| fig-width: 7
+#| fig-height: 5
+#| fig-align: center
+#| fig-cap: "Illustration of the dose-response and the dose-toxicity curves (left) and the dose-survival curve (right)."
+tox_df <- data.frame(
+  dose = rep(d,ncurve)
+)
+tox_df$rate <- sapply(1:ncurve, function(i)
+  {
+  scaled_logistic_curve(d,k=k_values_tox[i],L=max_DLT[i])
+}) |>
+  unlist() |>
+  as.vector()
+tox_df$type <- "dose-toxicity"
+rsp_df <-  data.frame(
+  dose = rep(d,ncurve)
+)
+rsp_df$rate <- sapply(1:ncurve, function(i)
+  {
+  sigmoid_curve(d,a=a_values_rsp[i],b=b_values_rsp[i],L=max_ORR[i])
+}) |> 
+  unlist() |>
+  as.vector()
+rsp_df$type <- "dose-response"
+surv_df <-  data.frame(
+  dose = rep(d,ncurve)
+)
+surv_df$rate <- sapply(1:ncurve, function(i)
+  {
+  sigmoid_curve(d,a=a_values_surv[i],b=b_values_surv[i],L=max_OS[i],
+          scale = scale_surv, offset = offset_surv)
+}) |> 
+  unlist() |>
+  as.vector()
+surv_df$type <- "dose-survival"
+df <- rbind(tox_df,rsp_df,surv_df)
+df$id <- rep(1:(3*ncurve),
+             each=length(d))
+p1 <- df |>
+  filter(type!="dose-survival") |>
+ggplot(aes(x=dose,y=rate,
+                  group = id,color=type))+
+  geom_line()+
+  theme_bw()+
+  geom_hline(yintercept = target_DLT,color="darkgrey",linetype=2,
+             lwd=1)+
+  ylim(c(0,1))+
+  xlim(c(0,1))+
+  scale_color_manual(
+    values = c("#b84b2d","#646c94")
+  )+
+  labs(x="% of maximum dose",y="Rate",color="Type")+
+  theme(
+    legend.position = "bottom"
+  )
+
+p2 <- df |>
+  filter(type=="dose-survival") |>
+ggplot(aes(x=dose,y=rate,
+                  group = id,color=type))+
+  geom_line()+
+  theme_bw()+
+  xlim(c(0,1))+
+  scale_color_manual(
+    values = c("orange2")
+  )+
+  labs(x="% of maximum dose",y="Median OS",color="Type")+
+  theme(
+    legend.position = "bottom"
+  )
+profile_chemo <- ggarrange(p1,p2,ncol=2)
+```
+
+## Non-monotone drug profiles
+
+```{r}
+set.seed(86)
+# target DLT for MTD
+target_DLT <- 0.3
+# number of curves to simulate
+ncurve <- 1e2
+# maximum DLT rate
+max_DLT <- runif(ncurve,min=0.7,max=0.8)
+# maximum response rate
+max_ORR = runif(ncurve,min=0.4,max=0.5)
+# maximum survival (will be scaled)
+max_OS <- runif(n=ncurve,min=0.4,max = 0.6)
+# dose sequence
+d <- seq(0,1,by=0.01)
+# for tox curve
+k_values_tox <- runif(n=ncurve,min = -5,max=-2)
+# for response curve, the dose at which the curve peaks
+D_values_rsp <- runif(n=ncurve,min=0.5,max = 0.7)
+# for survival curve, a < b
+# scale such that maximum median survival is on the right scale
+# offset so the minimum median survival with dose 0 is X (months)
+D_values_surv <- runif(n=ncurve,min=0.5,max = 0.7)
+scale_surv <- 20
+offset_surv <- 8
+```
+
+```{r}
+tox_df <- data.frame(
+  dose = rep(d,ncurve)
+)
+tox_df$rate <- sapply(1:ncurve, function(i)
+{
+  scaled_logistic_curve(d,k=k_values_tox[i],L=max_DLT[i])
+}) |>
+  unlist() |>
+  as.vector()
+tox_df$type <- "dose-toxicity"
+rsp_df <-  data.frame(
+  dose = rep(d,ncurve)
+)
+rsp_df$rate <- sapply(1:ncurve, function(i)
+{
+  umbrella_curve(d,D=D_values_rsp[i],L=max_ORR[i])
+}) |> 
+  unlist() |>
+  as.vector()
+rsp_df$type <- "dose-response"
+surv_df <-  data.frame(
+  dose = rep(d,ncurve)
+)
+surv_df$rate <- sapply(1:ncurve, function(i)
+{
+  umbrella_curve(d,D=D_values_surv[i],L=max_OS[i],
+                scale = scale_surv, offset = offset_surv)
+}) |> 
+  unlist() |>
+  as.vector()
+surv_df$type <- "dose-survival"
+df <- rbind(tox_df,rsp_df,surv_df)
+df$id <- rep(1:(3*ncurve),
+             each=length(d))
+p1 <- df |>
+  filter(type!="dose-survival") |>
+  ggplot(aes(x=dose,y=rate,
+             group = id,color=type))+
+  geom_line()+
+  theme_bw()+
+  geom_hline(yintercept = target_DLT,color="darkgrey",linetype=2,
+             lwd=1)+
+  ylim(c(0,1))+
+  xlim(c(0,1))+
+  scale_color_manual(
+    values = c("#b84b2d","#646c94")
+  )+
+  labs(x="% of maximum dose",y="Rate",color="Type")+
+  theme(
+    legend.position = "bottom"
+  )
+
+p2 <- df |>
+  filter(type=="dose-survival") |>
+  ggplot(aes(x=dose,y=rate,
+             group = id,color=type))+
+  geom_line()+
+  theme_bw()+
+  xlim(c(0,1))+
+  scale_color_manual(
+    values = c("orange2")
+  )+
+  labs(x="% of maximum dose",y="Median OS",color="Type")+
+  theme(
+    legend.position = "bottom"
+  )
+profile_non_monotone <- ggarrange(p1,p2,ncol=2)
+ggarrange(profile_chemo,profile_immuno,
+          profile_non_monotone,ncol=2,nrow=2,
+          common.legend = TRUE)
+```
+
+## Generate drug profiles
+
+Here we generate 1000 drug profiles for 1000 iterations of simulation.
+
+```{r}
+# specify the drug family to simulation immno- or chemo-like
+drug_family <- "immuno"
+set.seed(0626)
+ndose <- 5
+ndrugs <- 100
+# store simulated data
+drug_data <- vector(mode = "list",
+                       length = ndrugs)
+N_ph1 <- 30
+N_ph2 <- 300
+N_ph3 <- 500
+
+for(i in 1:ndrugs)
+{
+  set.seed(i)
+  # dose selection
+  lowest_dose <- runif(1,min = 0.1,max=0.15)
+  dose_levels <- lowest_dose*c(1,2,2*1.65,2*1.65*1.52,2*1.65*1.52*1.4)
+  dose_levels[dose_levels>1] <- 1
+  # get parameter values
+  # DLT rates
+  if (drug_family == "chemo" | drug_family == "immuno")
+  {
+    if(drug_family == "chemo")
+    {
+    k = k=runif(n=1,min = -5,max=-2)
+    L_tox = runif(n=1,min=0.7,max=0.8)
+    L_rsp=runif(n=1,min=0.5,max=0.6)
+    L_surv = runif(n=1,min=0.4,max=0.6)
+    a_rsp=runif(n=1,min=3,max = 5)
+    b_rsp=runif(n=1,min=2,max = 4)
+    a_surv = runif(n=1,min=2,max = 5)
+    b_surv = runif(n=1,min=1.5,max = 2.5)
+    scale_surv <- 22
+    offset_surv <- 8
+    } else {
+    # immuno
+    k = k=runif(n=1,min = -5,max=-2)
+    L_tox = runif(n=1,min=0.7,max=0.8)
+    L_rsp=runif(n=1,min=0.4,max=0.5)
+    L_surv = runif(n=1,min=0.4,max=0.6)
+    a_rsp <- runif(n=1,min=1,max = 3)
+    b_rsp <- runif(n=1,min=5,max = 7)
+    a_surv <- runif(n=1,min=0.1,max = 1)
+    b_surv <- runif(n=1,min=4,max = 6)
+    scale_surv <- 20
+    offset_surv <- 8
+  }
+  rsp_rates <- sigmoid_curve(dose_levels, a= a_rsp,b=b_rsp,L=L_rsp,
+                       )
+  median_OS <- sigmoid_curve(dose_levels,
+                       a = a_surv, b = b_surv, L = L_surv,
+                       scale = scale_surv,
+                       offset = offset_surv)
+  parameter <- c("k"=k,"L_tox"=L_tox,
+                  "a_rsp"=a_rsp,"b_rsp"=b_rsp,"L_rsp"=L_rsp,
+                  "a_surv" = a_surv,"b_surv" = b_surv,"L_surv"=L_surv)
+  } else if (drug_family=="non-monotone")
+  {
+    k = k=runif(n=1,min = -5,max=-2)
+    L_tox = runif(n=1,min=0.7,max=0.8)
+    L_rsp=runif(n=1,min=0.4,max=0.5)
+    L_surv = runif(n=1,min=0.4,max=0.6)
+    D_rsp <- runif(n=1,min=0.5,max = 0.7)
+    D_surv <- runif(n=1,min=0.5,max = 0.7)
+    scale_surv <- 20
+    offset_surv <- 8
+    rsp_rates <- umbrella_curve(dose_levels, D= D_rsp,L=L_rsp
+                       )
+    median_OS <- umbrella_curve(dose_levels,
+                       D = D_surv, L_surv,
+                       scale = scale_surv,
+                       offset = offset_surv)
+    parameter <- c("k"=k,"L_tox"=L_tox,
+                  "D_rsp"=D_rsp,"L_rsp"=L_rsp,
+                  "D_surv" = D_surv,"L_surv"=L_surv)
+  } else
+  {
+    stop("Unknown drug family!")
+  }
+  # Toxicity data
+  DLT_rates <- scaled_logistic_curve(dose_levels,
+                                     k=k,
+                                     L=L_tox)
+  data_ph1_DLT <- gen_DLT(nsim=1,
+                                    DLT_rates = DLT_rates,
+                                    N = N_ph1)[[1]]
+  data_ph2_DLT <- gen_DLT(nsim=1,
+                                    DLT_rates = DLT_rates,
+                                    N = N_ph2)[[1]]
+  data_ph3_DLT <- gen_DLT(nsim=1,
+                                    DLT_rates = DLT_rates,
+                                    N = N_ph3)[[1]]
+  
+  # Response data and survival data
+  data_rsp <- gen_rsp(nsim=1,
+                                    rsp_rates = rsp_rates,
+                                    N = N_ph2)[[1]]
+  
+  data_surv <- gen_surv(
+                                      nsim = 1,
+                                      N = N_ph3,
+                                      median_surv0 = 14,
+                                      median_surv1 = median_OS,
+                                      p_trt = 0.5,
+                                      maxt = 60
+                                    )[[1]]
+  profile_info <- list(
+    drug_id = i,
+    dose = dose_levels,
+    DLT_rate = DLT_rates,
+    rsp_rate = rsp_rates,
+    median_OS = median_OS,
+    parameter = parameter
+  )
+  drug_data[[i]] <- list("drug_family"=drug_family,
+                         "profile_info"=profile_info,
+                         "data_ph1_DLT" = data_ph1_DLT,
+                         "data_ph2_DLT" = data_ph2_DLT,
+                         "data_ph3_DLT" = data_ph3_DLT,
+                         "data_rsp" = data_rsp,
+                         "data_surv" = data_surv)
+ if(i%%100==0) print(i)
+}
+save(drug_data,
+     file = paste0("simulated_data_",drug_family,".RData"))
+```
+
+### Summary statistics for simulated data
+
+```{r,echo=FALSE,warning=FALSE}
+#| label: fig-drug-samples-summary
+#| fig-width: 7
+#| fig-height: 5
+#| fig-align: center
+#| fig-cap: "Distribution of DLT rates and response rates (right) and overall survival (left) from 100 random samples with 5 dose levels from the above dose-response, dose-toxicity, and dose-survival curves."
+all_drugs_df <- bind_rows(sapply(drug_profile_info,function(i)
+  {
+  df = data.frame(
+    drug_id = rep(i$drug_id,5),
+    dose = i$dose,
+    dose_label = 1:5,
+    DLT_rate = i$DLT_rate,
+    rsp_rate = i$rsp_rate,
+    median_OS = i$median_OS
+  )
+},simplify = FALSE))
+all_drugs_df_long <- all_drugs_df |>
+  reshape2::melt(measure.vars=c("DLT_rate","rsp_rate","median_OS"),
+                 variable.name = "type")
+p1 <- all_drugs_df_long |>
+  filter(type!="median_OS") |>
+  ggplot(aes(x=factor(dose_label),y=value,fill=type)) +
+  geom_boxplot()+
+  theme_bw()+
+  scale_fill_manual(
+    values = c("#646c94","#b84b2d"),
+    labels = c(DLT_rate = "dose-toxicity",
+               rsp_rate = "dose-response")
+  )+
+  labs(x="Dose levels",y="Rate",fill="Type")+
+  theme(
+    legend.position = "bottom"
+  )
+
+p2 <- all_drugs_df_long |>
+  filter(type=="median_OS") |>
+  ggplot(aes(x=factor(dose_label),y=value,fill=type)) +
+  geom_boxplot()+
+  theme_bw()+
+  scale_fill_manual(
+    values = c("orange2"),
+    label = c(median_OS = "dose-survival")
+  )+
+  labs(x="Dose levels",y="Median OS",fill="Type")+
+  theme(
+    legend.position = "bottom"
+  )
+ggarrange(p1,p2,ncol=2)
+```
+
+### Realized dose selection
+
+We set "dose" to range between 0 and 1, so it is not absolute dosage, but relative dose compared to the maximum possible dose in trial investigation.
+
+The dose selection in clinical investigations often follows a pattern that the dose increment is larger among lower doses and gets smaller for higher doses.
+
+We pick five doses for investigation (median value of the number of doses investigated in Phase I trials). We first sample the lowest dose from between 7-14th percentile (the lower bound ensures that we have at least 0.5 for the highest dose, and the upper bound ensures that we have at most 1 for the highest dose), then we use dose increments of $100\%, 65\%, 52\%, 40\%$ (modified Fibonacci scheme) to get the rest of 4 doses (@fig-drug-samples).
+
+For this type of drug profiles, increasing to MTD (mostly dose 5) is unnecessary as the efficacy is already close to maximum at dose 3 or 4 (@fig-drug-samples-summary).
+
+```{r,echo=FALSE,warning=FALSE}
+#| label: fig-drug-samples
+#| fig-width: 7
+#| fig-height: 5
+#| fig-align: center
+#| fig-cap: "100 random samples with 5 dose levels from the dose-response and the dose-toxicity curves (left) and the dose-survival curve (right)."
+p1 <- all_drugs_df_long |>
+  filter(type!="median_OS", drug_id <= 100) |>
+  ggplot(aes(x=dose,y=value,group =interaction(drug_id,
+                                               type),color=type)) +
+  geom_point(alpha=0.5) +
+  geom_line(alpha=0.5)+
+  theme_bw()+
+  geom_hline(yintercept = target_DLT,color="darkgrey",linetype=2,
+             lwd=1)+
+  ylim(c(0,1))+
+  xlim(c(0,1))+
+  scale_color_manual(
+    values = c("#646c94","#b84b2d"),
+    labels = c(DLT_rate = "dose-toxicity",
+               rsp_rate = "dose-response")
+  )+
+  labs(x="% of maximum dose",y="Rate",color="Type")+
+  theme(
+    legend.position = "bottom"
+  )
+
+p2 <- all_drugs_df_long |>
+  filter(type=="median_OS",drug_id<=100) |>
+  ggplot(aes(x=dose,y=value,group =interaction(drug_id,
+                                               type),color=type)) +
+  geom_point(alpha=0.5) +
+  geom_line(alpha=0.5)+
+  theme_bw()+
+  xlim(c(0,1))+
+  scale_color_manual(
+    values = c("orange2"),
+    label = c(median_OS = "dose-survival")
+  )+
+  labs(x="% of maximum dose",y="Median OS",color="Type")+
+  theme(
+    legend.position = "bottom"
+  )
+ggarrange(p1,p2,ncol=2)
+```

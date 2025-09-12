@@ -1,0 +1,310 @@
+---
+title: "Comparison of Phase I/II Design Strategies"
+author: "Yongxi Long"
+format: html
+  self-contained: TRUE
+editor: visual
+---
+
+## Aim
+
+To evaluate the impact of early phase design strategies on later phase success rate. We mainly compare two strategies to evaluate whether it is more efficient to invest more in Phase I or in Phase II:
+
+-   Consider both toxicity and efficacy in Phase I (univariate CRM), carry one dose into Phase II
+-   Consider only toxicity in Phase I (bivariate CRM), carry two doses into Phase II
+
+We'll look at three types of drug profiles, where the dose-efficacy/survival relationships plateau before/around/after the MTD.
+
+```{r,warning=FALSE,message=FALSE}
+rm(list = ls())
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(ggplot2)
+  library(ggsci)
+  library(RColorBrewer)
+  library(trialr)
+  library(clinfun)
+  library(ggExtra)
+  library(ggridges)
+})
+```
+
+## Load data
+
+```{r}
+drug_family <- "immuno"
+load(paste0("data/simulated_data_",drug_family,".RData"))
+```
+
+## Phase I
+
+### CRM design
+
+```{r}
+source("functions/CRM.R")
+# trial design parameters
+# sample size
+N <- 30
+# cohort size
+cohort_size= 1
+# target DLT
+target_DLT <- 0.3
+# overdose control
+# toxicity bound, if Pr(toxcitiy prob at dose j > target DLT) > tox_bound
+# or Equivalently Pr(toxcitiy prob at dose j < target DLT) < 1 - tox_bound
+# this dose will be inadmissible even if it may be recommended by the model
+tox_bound <- 0.25
+```
+
+```{r}
+# CRM without overdose control
+res_ph1_CRM <- vector(mode = "list",length = length(drug_data))
+for(i in 1:length(drug_data))
+{
+  res <- run_CRM(data=drug_data[[i]],
+                    N=N,
+                    cohort_size = cohort_size,
+                    target_DLT=target_DLT,
+                    tox_bound = tox_bound,
+                    model="empiric")
+  res_ph1_CRM[[i]] <- res
+  print(i)
+}
+save(res_ph1_CRM,file = paste0("results/res_ph1_",drug_family,"_CRM_OC25.RData"))
+```
+
+### EffTox design
+
+We first need to setup the design parameters for EffTox
+
+```{r}
+source("functions/EffTox.R")
+# trial design paramters
+# sample size
+N <- 30
+# cohort size
+cohort_size <- 3
+# Threshold for selecting desirable doses
+efficacy_hurdle <- 0.3
+toxicity_hurdle <- 0.6
+p_e <- p_t <- 0.1
+# the Contour
+eff0 <- 0.35 # smallest rsp acceptable if there is no toxicity, set to same as SOC
+tox1 <- 0.45 # highest DLT acceptable if the rsp is 100%, set to 150% of the target DLT
+eff_star <- 0.4
+tox_star <- 0.25
+p_EffTox <- efftox_solve_p(eff0,tox1,eff_star,tox_star)
+# prior guess of DLT/RSP prob for each dose
+pi_T <- dfcrm::getprior(halfwidth = 0.05,target = 0.3,nu=3,nlevel=5,model="empiric")
+pi_E <- dfcrm::getprior(halfwidth = 0.05,target = 0.45,nu=3,nlevel=5,model="empiric")
+# effective sample size for the prior
+ess_T <- ess_E <- 0.5
+# get normal prior hyperparameters for the EffTox model
+# it can take some time for iterative calculation
+# the dose levels are already scaled between 0-1, it does 
+# not impact the prior hyperparamters that much
+# so for saving time, will use the same (average) actual dose
+# levels for all simulation iteration, although the actual dose
+# levels are different for each iteration
+priors_EffTox <- get_efftox_priors(doses = c(0.12,0.25,0.41,0.63,0.87),
+                                   pi_T = pi_T,
+                                   ess_T = ess_T,
+                                   pi_E = pi_E,
+                                   ess_E = ess_E)
+```
+
+Perform the EffTox design on the 1000 drug profiles
+
+```{r}
+res_ph1_EffTox <- vector(mode = "list",length = length(drug_data))
+for(i in 1:length(drug_data))
+{
+  dat <- drug_data[[i]]
+  res <- run_EffTox(
+      data = dat,
+      N=N,
+      cohort_size=cohort_size,
+      efficacy_hurdle = efficacy_hurdle, toxicity_hurdle = toxicity_hurdle,
+      p_e = p_e, p_t = p_t,
+      eff0 = eff0, tox1 = tox1,
+      eff_star = eff_star, tox_star = tox_star,
+      priors = priors_EffTox)
+  res_ph1_EffTox[[i]] <- res
+  print(i)
+}
+save(res_ph1_EffTox,file = paste0("results/res_ph1_",drug_family,"_EffTox.RData"))
+```
+
+### Examine Phase I results
+
+#### Summary table of dose selection
+
+```{r}
+RP2D_CRM <- sapply(res_ph1_CRM,function(x) x$RP2D)
+RP2D_EffTox <- sapply(res_ph1_EffTox, function(x) x$RP2D)
+RP2D_summary <- data.frame(RP2D = factor(c(RP2D_CRM,RP2D_EffTox),levels=1:5),
+                           Design = rep(c("CRM","EffTox"),
+                                        c(length(RP2D_CRM),
+                                          length(RP2D_EffTox)))) 
+RP2D_summary |>
+  group_by(Design, RP2D,.drop=FALSE) |>
+  summarize(n=n()) |>
+  mutate(Prob_selected = n/sum(n))|>
+  select(-n) |>
+  ungroup()
+```
+
+
+#### Plot of the true OBD vs. selected by CRM/EffTox
+
+```{r,warning=FALSE}
+nsim <- length(drug_data)
+# see which dose has been selected on the true tox - eff panel
+df_CRM_selected <- df_EffTox_selected <- df_OBD_true <- data.frame(
+  iteration = 1:nsim,
+  dose = rep(NA,nsim),
+  prob_DLT = rep(NA,nsim),
+  prob_RSP = rep(NA,nsim)
+)
+for(i in 1:nsim)
+{
+  # determine the true OBD
+  # get the utility of efficacy & toxicity probability pairs
+  rsp_rate <- drug_data[[i]]$profile_info$rsp_rate
+  DLT_rate <- drug_data[[i]]$profile_info$DLT_rate
+  utility <- efftox_utility(p=p_EffTox,
+                            eff0=eff0,
+                            tox1=tox1,
+                            prob_eff = rsp_rate,
+                            prob_tox = DLT_rate)
+  OBD_true <- which.max(utility)
+  df_OBD_true[i,2:4] <- c(OBD_true,
+                          DLT_rate[OBD_true],
+                          rsp_rate[OBD_true])
+  
+  dose_EffTox <- res_ph1_EffTox[[i]]$RP2D
+  df_EffTox_selected[i,2:4] <- c(dose_EffTox,
+                                 ifelse(is.na(dose_EffTox),NA,DLT_rate[dose_EffTox]),
+                                 ifelse(is.na(dose_EffTox),NA,rsp_rate[dose_EffTox]))
+  dose_CRM <- res_ph1_CRM[[i]]$RP2D
+  df_CRM_selected[i,2:4] <- c(dose_CRM,
+                              ifelse(is.na(dose_CRM),NA,DLT_rate[dose_CRM]),
+                              ifelse(is.na(dose_CRM),NA,rsp_rate[dose_CRM]))
+}
+df_OBD_true$type <- "True OBD"
+df_EffTox_selected$type <- "EffTox selected"
+df_CRM_selected$type <- "CRM selected"
+df_comb <- rbind(df_OBD_true,df_EffTox_selected,df_CRM_selected)
+# percentage of selecting the OBD correctly
+# CRM
+prob_OBD_CRM <- mean(df_OBD_true$dose == df_CRM_selected$dose,na.rm = TRUE)
+# EffTox
+prob_OBD_EffTox <- mean(df_OBD_true$dose == df_EffTox_selected$dose,na.rm = TRUE)
+p1 <- df_comb |>
+  ggplot(aes(x=prob_RSP,y=prob_DLT,color=type))+
+  geom_point(alpha=0.3)+
+  theme_bw()+
+  geom_vline(xintercept = 0.45,linetype=2,color="seagreen")+
+  geom_hline(yintercept = 0.3,linetype=2,color="indianred3")+
+  ylim(c(0,1))+
+  xlim(c(0.3,0.6))+
+  labs(x="Probability of response",y="Probability of DLT")+
+  annotate("text",label=paste0("Prob of selecting OBD by EffTox = ",round(prob_OBD_EffTox,2)),x=0.5, y =0.95)+
+  annotate("text",label=paste0("Prob of selecting OBD by CRM = ",round(prob_OBD_CRM,2)),x=0.5, y =0.9)
+ggMarginal(p1,
+           type = "density",
+           groupFill = TRUE)
+```
+
+#### Risk/efficacy exposure assessment
+
+See the true DLT rates/response rates of doses that patients were assigned to 
+
+```{r}
+DLT_rate_all <- RSP_rate_all <- design_all <- numeric()
+
+for(i in 1:length(drug_data)) {
+  
+  # CRM
+  dose_history_CRM <- res_ph1_CRM[[i]]$dose_history
+  DLT_rate_vec <- drug_data[[i]]$profile_info$DLT_rate[dose_history_CRM]
+  RSP_rate_vec <- drug_data[[i]]$profile_info$rsp_rate[dose_history_CRM]
+  
+  DLT_rate_all <- c(DLT_rate_all, DLT_rate_vec)
+  RSP_rate_all <- c(RSP_rate_all, RSP_rate_vec)
+  design_all <- c(design_all, rep("CRM", length(DLT_rate_vec)))
+  
+  # EffTox
+  dose_history_EffTox <- res_ph1_EffTox[[i]]$dose_history
+  DLT_rate_vec <- drug_data[[i]]$profile_info$DLT_rate[dose_history_EffTox]
+  RSP_rate_vec <- drug_data[[i]]$profile_info$rsp_rate[dose_history_EffTox]
+  
+  DLT_rate_all <- c(DLT_rate_all, DLT_rate_vec)
+  RSP_rate_all <- c(RSP_rate_all, RSP_rate_vec)
+  design_all <- c(design_all, rep("EffTox", length(DLT_rate_vec)))
+}
+
+# Construct final data frame
+patient_dosing_history <- data.frame(
+  DLT_rate = DLT_rate_all,
+  rsp_rate = RSP_rate_all,
+  design = design_all
+)
+
+patient_dosing_summary <- patient_dosing_history |>
+  group_by(design) |>
+  summarise(mean_DLT = mean(DLT_rate),
+            prob_overdosing = mean(DLT_rate > 0.3),
+            mean_rsp = mean(rsp_rate),
+            prob_futile = mean(rsp_rate < 0.45))
+# DLT rates
+p1 <- patient_dosing_history |>
+ggplot(aes(x = DLT_rate, y = design)) +
+  geom_density_ridges() +
+  geom_vline(xintercept = 0.30, linetype = "dashed") +
+  labs(x = "DLT rate of doses assigned to patients", y = "Design")+
+  theme_bw()+
+   annotate("text",x=0.6,y=3.5,label=paste0("EffTox: P(dosing a patient at > target DLT)=",round(patient_dosing_summary$prob_overdosing[2],2)))+
+  annotate("text",x=0.6,y=3.2,label=paste0("CRM: P(dosing a patient at > target DLT)=",round(patient_dosing_summary$prob_overdosing[1],2)))
+
+# Response rates
+p2 <- patient_dosing_history |>
+ggplot(aes(x = rsp_rate, y = design)) +
+  geom_density_ridges() +
+  geom_vline(xintercept = 0.45, linetype = "dashed") +
+  labs(x = "Response rate of doses assigned to patients", y = "Design")+
+  theme_bw()+
+   annotate("text",x=0.2,y=3.2,label=paste0("EffTox: P(dosing a patient at < target response)=",round(patient_dosing_summary$prob_futile[2],2)))+
+  annotate("text",x=0.2,y=2.9,label=paste0("CRM: P(dosing a patient at < target response)=",round(patient_dosing_summary$prob_futile[1],2)))
+
+ggpubr::ggarrange(p1,p2,ncol=1,nrow=2)
+```
+
+## Phase II
+
+### Simon's two-stage design
+
+We first supply clinical information to get design parameters for the Simon's two-stage design
+
+```{r}
+design_para <- simon2stage_design(p0=0.35,
+                                  p1=0.45)
+```
+
+```{r}
+res_ph2_simon2stage <- vector(mode = "list",length = length(drug_data))
+for (i in 1:length(drug_data))
+{
+  res <- run_simon2stage(
+  data = drug_data[[i]],
+  design_para = design_para)
+  
+  res_ph2_simon2stage[[i]] <- res
+}
+```
+
+## Combine Phase I-II results
+
+```{r}
+
+```
