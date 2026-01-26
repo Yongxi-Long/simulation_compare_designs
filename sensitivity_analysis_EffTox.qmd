@@ -1,0 +1,293 @@
+---
+title: "Sensitivity analysis of EffTox"
+author: "Yongxi Long"
+format: 
+  html:
+      self-contained: true
+code-fold: true
+editor: visual
+---
+
+## Aim
+
+EffTox design involves multiple user-speficied tuning parameters, some are usually set to certain standard values or have a clear clinical reference, for example, the efficacy hurdle is often the desired response rate at later Phase II and the toxicity hurdle the target DLT. Some, however, are more ambigous to specify from a clinical perspective, such as the three points defining the Contour plot.
+
+This script will investigate the impact of the contour plot specification on the performance of EffTox across the three drug families
+
+```{r,echo=FALSE}
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(ggplot2)
+  library(ggsci)
+  library(RColorBrewer)
+  library(trialr)
+  library(clinfun)
+  library(ggExtra)
+  library(ggridges)
+  library(ggpubr)
+})
+source("functions/combine_res.R")
+```
+
+## Simulation for a series of Contour plots
+
+```{r,echo=FALSE}
+source("functions/EffTox.R")
+# trial design parameters
+# sample size
+N <- 30
+# cohort size
+cohort_size <- 3
+# Threshold for selecting desirable doses
+efficacy_hurdle <- 0.5 # desired response rate
+toxicity_hurdle <- 0.3 # target DLT
+p_e <- p_t <- 0.05
+# prior guess of DLT/RSP prob for each dose
+pi_T <- dfcrm::getprior(halfwidth = 0.05,target = 0.3,nu=3,nlevel=6,model="empiric")
+pi_E <- dfcrm::getprior(halfwidth = 0.05,target = 0.5,nu=3,nlevel=6,model="empiric")
+# effective sample size for the prior
+ess_T <- ess_E <- 1
+# get normal prior hyperparameters for the EffTox model
+# it can take some time for iterative calculation
+# the dose levels are already scaled between 0-1, it does 
+# not impact the prior hyperparamters that much
+# so for saving time, will use the same (average) actual dose
+# levels for all simulation iteration, although the actual dose
+# levels are different for each iteration
+priors_EffTox <- get_efftox_priors(doses = c(0.1000000, 
+                                             0.2000000, 
+                                             0.3300000, 
+                                             0.5016000, 
+                                             0.7022400, 
+                                             0.9339792),
+                                   pi_T = pi_T,
+                                   ess_T = ess_T,
+                                   pi_E = pi_E,
+                                   ess_E = ess_E)
+# the Contour
+# smallest rsp acceptable if there is no toxicity, set to around the SOC, p0 = 0.4
+eff0_vec <- c(0.35,0.45)
+# highest DLT acceptable if the rsp is 100%, set to slightly more than the target DLT 30%
+tox1_vec <- c(0.5,0.8)
+sce_df <- expand.grid(eff0=eff0_vec,tox1=tox1_vec)
+sce_df <- rbind(sce_df,sce_df)
+# middle neutral utility value
+# slight more toxic than target, and slight less efficacious than target
+sce_df$eff_star <- c(rep(0.65,4),rep(0.55,4))
+sce_df$tox_star <- c(rep(0.25,4),rep(0.45,4))
+main_sce_df <- data.frame(
+  eff0 = 0.4,
+  tox1 = 0.7,
+  eff_star = 0.65,
+  tox_star = 0.25
+)
+# drug families
+drug_families <- c("immuno_fixed_OBD3_MTD5", "immuno_fixed_OBD4_MTD5", "chemo_fixed_MTD5" )
+```
+
+```{r,echo=FALSE,eval=FALSE}
+all_sce_df <- rbind(main_sce_df,sce_df)
+contour_plots <- vector(mode = "list",length = nrow(all_sce_df))
+for(i in 1:nrow(all_sce_df))
+{
+  eff0 <- all_sce_df$eff0[i]; tox1 <- all_sce_df$tox1[i]
+  eff_star <- all_sce_df$eff_star[i]; tox_star <- all_sce_df$tox_star[i]
+  p_EffTox <-  trialr::efftox_solve_p(eff0,tox1,eff_star,tox_star)
+
+  fit_EffTox <- stan_efftox(
+        outcome_str = "1NNN",
+        real_doses = drug_data[[1]]$profile_info$dose,
+        efficacy_hurdle = efficacy_hurdle,
+        toxicity_hurdle = toxicity_hurdle,
+        p_e = p_e,
+        p_t = p_t,
+        eff0 = eff0,
+        tox1 = tox1,
+        eff_star = eff_star,
+        tox_star = tox_star,
+        priors = priors_EffTox,
+        refresh = 0
+      )
+  contour_plots[[i]] <- efftox_contour_plot(fit_EffTox,use_ggplot = TRUE)+
+    theme(
+      axis.title = element_text(size=8)
+    )
+}
+save(contour_plots,file = "results/res_EffTox/Contour_plots.RData")
+```
+
+```{r,echo=FALSE,warning=FALSE}
+load("results/res_EffTox/Contour_plots.RData")
+ggarrange(plotlist = contour_plots,nrow=3,ncol=3)
+
+ggarrange(plotlist = contour_plots[2:9],nrow=2,ncol=4,
+          labels = 1:8)
+```
+
+
+
+```{r,eval=FALSE,echo=FALSE}
+# run the simulation
+for(drug_family in drug_families)
+{
+load(paste0("data/simulated_data/",drug_family,".RData"))
+for(sce in 1:nrow(sce_df))
+{
+eff0 <- sce_df$eff0[sce]; tox1 <- sce_df$tox1[sce]
+eff_star <- sce_df$eff_star[sce]; tox_star <- sce_df$tox_star[sce]
+p_EffTox <-  trialr::efftox_solve_p(eff0,tox1,eff_star,tox_star)
+res_ph1_EffTox <- vector(mode = "list",length = length(drug_data))
+for(i in 1:length(drug_data))
+{
+  dat <- drug_data[[i]]
+  res <- suppressWarnings({
+    run_EffTox(
+      data = dat,
+      N=N,
+      cohort_size=cohort_size,
+      efficacy_hurdle = efficacy_hurdle, 
+      toxicity_hurdle = toxicity_hurdle,
+      p_e = p_e, p_t = p_t,
+      eff0 = eff0, tox1 = tox1,
+      eff_star = eff_star, tox_star = tox_star,
+      priors = priors_EffTox)
+  })
+  res_ph1_EffTox[[i]] <- res
+  print(i)
+}
+save(res_ph1_EffTox,file = paste0("results/res_EffTox/res_ph1_",
+                                  drug_family,
+                                  "_EffTox_sce",
+                                  sce,".RData"))
+}
+  }
+```
+
+## Visualize results
+
+```{r,echo=FALSE,warning=FALSE}
+drug_family <- drug_families[2]
+RP2D_summary_OBD <- purrr::map_dfr(1:nrow(sce_df),function(sce)
+{
+  load(paste0("results/res_EffTox/res_ph1_",
+              drug_family,
+              "_EffTox_sce",
+              sce,".RData"))
+  # Retrieve the actual object (e.g., res_ph1_threep3)
+  res_ph1_obj <- res_ph1_EffTox
+  res <- combine_res(res_ph1 = res_ph1_obj)
+  res <- res$`Table of RP2D` |>
+    select(dose_level,prob_selected) |>
+    mutate(Scenario = sce) 
+    # mutate(Design = factor(Design,levels=c("threep3","BOIN","CRM","EffTox"),
+    #                        labels = c("Threep3","BOIN","CRM","EffTox"))) |>
+  return(res)
+})
+
+drug_family_label <- case_when(
+      drug_family == "immuno_fixed_OBD3_MTD5" ~ "immuno-like profile OBD=3",
+      drug_family == "immuno_fixed_OBD4_MTD5" ~ "immuno-like profile OBD=4",
+      drug_family == "chemo_fixed_MTD5" ~ "chemo-like profile MTD=5"
+)
+
+
+RP2D_summary_OBD |>
+  ggplot(aes(x = factor(Scenario), y = prob_selected, group = factor(dose_level),
+             color=factor(dose_level))) +
+  geom_line(lwd=0.7)+
+  geom_point()+
+  theme_bw() +
+  labs(
+    x = "Contour setting",
+    y = "Probability of Selection",
+    color = "RP2D",
+    title = drug_family_label
+  )+
+  geom_text(aes(label = round(prob_selected, 2)),  # text labels
+            position = position_dodge(width = 0.8), 
+            vjust = -0.3,                          # vertical position (above bar)
+            size = 3,
+            angle = 45,
+            show.legend = FALSE)+
+  scale_color_viridis_d(option = "viridis",na.value="grey80")+
+  theme(
+    title = element_text(size=9)
+  )+
+  ylim(0,0.7)
+
+```
+
+
+## Combine Phase I-III results
+
+```{r,echo=FALSE}
+#drug_family <- "chemo_fixed_MTD5"
+# drug_family <- "immuno_fixed_OBD4_MTD5"
+# drug_family <- "immuno_fixed_OBD3_MTD5"
+p_list <- sapply(drug_families, function(drug_family)
+{
+TS_rules <- list(NULL,0.45,0.40,0.35,0.30)
+res_ph123_df <- purrr::map_dfr(TS_rules,function(TS)
+  {
+  load(paste0("results/res_ph2_",drug_family,"_simon2stage_TS",TS,".RData"))
+  load(paste0("results/res_ph3_",drug_family,"_RCT_TS",TS,".RData"))
+  out <- purrr::map_dfr(c("Main",1:8),function(sce)
+{
+  load(paste0("results/res_EffTox/res_ph1_",
+              drug_family,
+              "_EffTox_sce",
+              sce,".RData"))
+    res_ph1_obj <- res_ph1_EffTox
+    res <- combine_res(res_ph1 = res_ph1_obj,
+                       res_ph2 = res_ph2_simon2stage,
+                       res_ph3 = res_ph3_RCT)
+    out <- data.frame(
+      Ph123_PoS = res$`Phase I-III probability of significance`,
+      Ph23_PoTS = res$`Phase II&III probability of toxicity suspension`
+    ) |>
+      mutate(Scenario = sce) |>
+      mutate(Scenario = factor(Scenario,levels = c("Main",1:8)))
+    return(out)
+  })
+  out <- out |>
+    mutate( TS_rule = TS
+    )
+  return(out)
+})
+res_ph123_df <- res_ph123_df |>
+  mutate(TS_rule = case_when(
+    is.na(TS_rule) ~ "None",
+    TRUE ~ paste0(TS_rule*100,"% DLT")
+  ))
+
+drug_family_label <- case_when(
+      drug_family == "immuno_fixed_OBD3_MTD5" ~ "immuno-like profile OBD=3",
+      drug_family == "immuno_fixed_OBD4_MTD5" ~ "immuno-like profile OBD=4",
+      drug_family == "chemo_fixed_MTD5" ~ "chemo-like profile MTD=5"
+    )
+p <- res_ph123_df |>
+  mutate(TS_rule_f = factor(TS_rule,
+                            levels=c("None","45% DLT","40% DLT","35% DLT","30% DLT"))) |>
+  ggplot(aes(x=TS_rule_f,y=Ph123_PoS,color=factor(Scenario),
+             group = factor(Scenario)))+
+  geom_point()+
+  geom_line()+
+  theme_bw()+
+  labs(x="Toxicity suspension threshold",
+       y="Phase I-III Probability of Significance (PoS)",
+       title = drug_family_label,
+       color = "Contour setting")+
+  # scale_color_viridis_d()+
+  scale_color_manual(values = c( "red","#440154FF", "#46337EFF", "#365C8DFF",
+                                "#277F8EFF", "#1FA187FF", "#4AC16DFF" ,"#9FDA3AFF", "#FDE725FF"))+
+  theme(
+    legend.position = "right"
+  )
+  return(p)
+},simplify = FALSE)
+# immuno-like
+ggarrange(plotlist = p_list[1:2],ncol = 2,
+          common.legend = TRUE)
+# chemo-like
+p_list[[3]]
+```

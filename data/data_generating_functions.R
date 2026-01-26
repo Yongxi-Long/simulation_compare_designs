@@ -247,3 +247,88 @@ gen_surv <- function(nsim,
 }
 return(data_list)
 }
+
+
+# scaled logistic function
+scaled_logistic_curve <- function(d,k,L,scale=1,offset=0)
+{
+  sapply(d, function(d)
+  {
+    scale*(L*(1-exp(-k*d))/(1-exp(-k)))+offset
+  })
+}
+# functions to obtain Sigmoid-like curve 
+sigmoid_curve <- function(d,a,b,L,
+                          scale = 1, offset = 0)
+{
+  sapply(d, function(d)
+  {
+    sapply(d, function(d) 
+    {
+      scale*(L*d^a / (d^a + (1 - d)^b)) + offset
+    })
+  })
+}
+
+
+# function to visualize drug profiles
+plot_drug_profiles <- function(type="immuno",
+                               dose_levels = NULL,
+                               k_tox,L_tox,
+                               k_rsp=NULL,a_rsp=NULL,b_rsp=NULL,L_rsp,
+                               k_surv=NULL,a_surv=NULL,b_surv=NULL,L_surv,
+                               scale_surv,offset_surv,
+                               target_DLT=0.3)
+{
+  DLT_rates <- scaled_logistic_curve(dose_levels,
+                                     k=k_tox,
+                                     L=L_tox)
+  if(type=="immuno")
+  {
+    rsp_rates <- sigmoid_curve(dose_levels, a= a_rsp,b=b_rsp,L=L_rsp,
+    )
+    median_OS <- sigmoid_curve(dose_levels,
+                               a = a_surv, b = b_surv, L = L_surv,
+                               scale = scale_surv,
+                               offset = offset_surv)
+  } else if (type=="chemo")
+  {
+    rsp_rates <- scaled_logistic_curve(dose_levels,
+                                      k = k_rsp,
+                                      L=L_rsp)
+    median_OS <- scaled_logistic_curve(dose_levels,
+                                       k=k_surv,
+                                       L=L_surv,
+                                       scale = scale_surv,
+                                       offset = offset_surv)
+    
+  } else {
+    stop("Unknown drug type!")
+  }
+  
+  profile_df <- data.frame(
+    dose = rep(dose_levels,3),
+    value = c(DLT_rates,rsp_rates,median_OS),
+    type = rep(c("DLT","Response","Median OS"),each=ndose)
+  )
+  p1 <- profile_df |>
+    filter(type!="Median OS") |>
+    ggplot(aes(x=dose, y=value,color=type))+
+    geom_line()+
+    geom_point()+
+    theme_bw()+
+    labs(x="Dose levels",y="Rate")+
+    scale_color_manual(values = c("#646c94","#b84b2d"))+
+    geom_hline(yintercept = target_DLT,linetype=2,linewidth=0.8,color="darkgrey")
+  
+  p2 <- profile_df |>
+    filter(type=="Median OS") |>
+    ggplot(aes(x=dose, y=value,color=type))+
+    geom_line()+
+    geom_point()+
+    theme_bw()+
+    labs(x="Dose levels",y="Month")+
+    scale_color_manual(values =  c("orange2"))
+  plot <- ggpubr::ggarrange(p1,p2,ncol=2,legend = "top")
+  return(plot)
+}

@@ -1,0 +1,242 @@
+---
+title: "Sensitivity analysis for BOIN12"
+author: "Yongxi Long"
+format: 
+  html:
+    self-contained: true
+editor: visual
+---
+
+## Aim
+
+BOIN12 involves user-specified utility values for four pairs of outcome combinations: $u1$ for (Efficacy, No toxicity), $u2$ for (No efficacy, No Toxicity), $u3$ for (Efficacy, Toxicity), and $u4$ for (No efficacy, Toxicity). Usually $u1$ is set to 100 and $u4$ is set to 0 to benchmark the most/least desirable outcome scenario. The relative value of $u2$ and $u3$ reflects clinical considerations about the trade-off between efficacy and toxicity. If $u2 > u3$, we weigh toxicity more than efficacy.
+
+This script is to perform sensitivity analysis on the choice of the utility values for $u2$ and $u3$. For simplicity we constrain that $u2+u3=100$ such that there is only one tuning variable. We assess how various values of $u2$ affects the final probability of success across the three drug families.
+
+```{r}
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(ggplot2)
+  library(ggsci)
+  library(RColorBrewer)
+  library(trialr)
+  library(clinfun)
+  library(ggExtra)
+  library(ggridges)
+  library(ggpubr)
+})
+source("functions/combine_res.R")
+```
+
+## Simulation for a range of utility values
+
+```{r,echo=FALSE}
+# set up simulation scenarios
+source("functions/BOIN12.R")
+# the toxicity upper limit
+phi_t <- 0.35
+# the efficacy lower limit
+phi_e <- 0.5
+# when tox is within bounds, 
+# stop exploring higher doses when n at dose is greater than or equal to this value.
+n_star1 <- 6
+# dose-exploration rule, go to the next higher dose if more than this number of patients have been treated at current dose and the current dose is safe enough
+# and the next higher dose has not yet been explored
+n_star2 <- 8
+# combinations of utility values
+# utility for outcome no tox no response
+u2s <- seq(10,90,by=10)
+# utility for outcome tox yes and response yes
+u3s <- rev(u2s)
+# drug families
+drug_families <- c("immuno_fixed_OBD3_MTD5", "immuno_fixed_OBD4_MTD5", "chemo_fixed_MTD5" )
+```
+
+```{r,echo=FALSE,eval=FALSE}
+# run the simulation
+for(drug_family in drug_families)
+{
+load(paste0("data/simulated_data/",drug_family,".RData"))
+for(sce in 1:length(u2s))
+{
+u2 <- u2s[sce]; u3 <- u3s[sce]
+res_ph1_BOIN12 <- vector(mode = "list",length = length(drug_data))
+for(i in 1:length(drug_data))
+{
+  dat <- drug_data[[i]]
+  res <- suppressWarnings({
+    run_BOIN12(data = dat,
+               N= N,
+               cohort_size = 3,
+               phi_t = phi_t, phi_e = phi_e,
+               u2 = u2, u3 = u3,
+               n_star1 = n_star1, n_star2 = n_star2)
+  })
+  res_ph1_BOIN12[[i]] <- res
+  # print(i)
+}
+save(res_ph1_BOIN12,file = paste0("results/res_BOIN12/res_ph1_",
+                                  drug_family,
+                                  "_BOIN12_sce",
+                                  sce,".RData"))
+print(paste0(drug_family,": scenario",sce))
+}
+}
+```
+
+## Visualize results
+
+```{r,echo=FALSE,warning=FALSE}
+drug_family <- drug_families[3]
+RP2D_summary_OBD <- purrr::map_dfr(1:9,function(sce)
+{
+  load(paste0("results/res_BOIN12/res_ph1_",
+              drug_family,
+              "_BOIN12_sce",
+              sce,".RData"))
+  # Retrieve the actual object (e.g., res_ph1_threep3)
+  res_ph1_obj <- res_ph1_BOIN12
+  res <- combine_res(res_ph1 = res_ph1_obj)
+  res <- res$`Table of RP2D` |>
+    select(dose_level,prob_selected) |>
+    #mutate(Design = design) |>
+    mutate(utility2 = u2s[sce], Utility3 = u3s[sce]) 
+    # mutate(Design = factor(Design,levels=c("threep3","BOIN","CRM","EffTox"),
+    #                        labels = c("Threep3","BOIN","CRM","EffTox"))) |>
+    # mutate(Drug_family = case_when(
+    #   drug_family == "immuno_fixed_OBD3_MTD5" ~ "immuno OBD=3",
+    #   drug_family == "immuno_fixed_OBD4_MTD5" ~ "immuno OBD=4",
+    #   drug_family == "chemo_fixed_MTD5" ~ "chemo MTD=5"
+    # ))
+  return(res)
+})
+
+drug_family_label <- case_when(
+      drug_family == "immuno_fixed_OBD3_MTD5" ~ "immuno-like profile OBD=3",
+      drug_family == "immuno_fixed_OBD4_MTD5" ~ "immuno-like profile OBD=4",
+      drug_family == "chemo_fixed_MTD5" ~ "chemo-like profile MTD=5"
+    )
+# barplot 
+# RP2D_summary_OBD |>
+#   ggplot(aes(x = factor(utility2), y = prob_selected, fill = factor(dose_level))) +
+#   geom_bar(stat = "identity", position = position_dodge(width = 0.8)) +
+#   theme_bw() +
+#   labs(
+#     x = "u2 (u3=100-u2)",
+#     y = "Probability of Selection",
+#     fill = "RP2D",
+#     title = drug_family_label
+#   )+
+#   geom_text(aes(label = round(prob_selected, 2)),  # text labels
+#             position = position_dodge(width = 0.8), 
+#             vjust = -0.3,                          # vertical position (above bar)
+#             size = 3,
+#             angle = 45)+
+#   scale_fill_viridis_d(option = "viridis",na.value="grey80")+
+#   theme(
+#     title = element_text(size=9)
+#   )+
+#   ylim(0,0.7)
+
+
+RP2D_summary_OBD |>
+  ggplot(aes(x = factor(utility2), y = prob_selected, group = factor(dose_level),
+             color=factor(dose_level))) +
+  geom_line(lwd=0.7)+
+  geom_point()+
+  theme_bw() +
+  labs(
+    x = "u2 (u3=100-u2)",
+    y = "Probability of Selection",
+    color = "RP2D",
+    title = drug_family_label
+  )+
+  geom_text(aes(label = round(prob_selected, 2)),  # text labels
+            position = position_dodge(width = 0.8), 
+            vjust = -0.3,                          # vertical position (above bar)
+            size = 3,
+            angle = 45,
+            show.legend = FALSE)+
+  scale_color_viridis_d(option = "viridis",na.value="grey80")+
+  theme(
+    title = element_text(size=9)
+  )+
+  ylim(0,0.7)
+
+```
+
+## Combine Phase I-III results
+
+```{r}
+u2s <- seq(10,90,by=10)
+# utility for outcome tox yes and response yes
+u3s <- rev(u2s)
+#drug_family <- "chemo_fixed_MTD5"
+# drug_family <- "immuno_fixed_OBD4_MTD5"
+# drug_family <- "immuno_fixed_OBD3_MTD5"
+p_list <- sapply(drug_families, function(drug_family)
+{
+TS_rules <- list(NULL,0.45,0.40,0.35,0.30)
+res_ph123_df <- purrr::map_dfr(TS_rules,function(TS)
+  {
+  load(paste0("results/res_ph2_",drug_family,"_simon2stage_TS",TS,".RData"))
+  load(paste0("results/res_ph3_",drug_family,"_RCT_TS",TS,".RData"))
+  out <- purrr::map_dfr(1:9,function(sce)
+{
+  load(paste0("results/res_BOIN12/res_ph1_",
+              drug_family,
+              "_BOIN12_sce",
+              sce,".RData"))
+    res_ph1_obj <- res_ph1_BOIN12
+    res <- combine_res(res_ph1 = res_ph1_obj,
+                       res_ph2 = res_ph2_simon2stage,
+                       res_ph3 = res_ph3_RCT)
+    out <- data.frame(
+      Ph123_PoS = res$`Phase I-III probability of significance`,
+      Ph23_PoTS = res$`Phase II&III probability of toxicity suspension`
+    ) |>
+      mutate(u2 = u2s[sce],u3=u3s[sce])
+    return(out)
+  })
+  out <- out |>
+    mutate( TS_rule = TS
+    )
+  return(out)
+})
+res_ph123_df <- res_ph123_df |>
+  mutate(TS_rule = case_when(
+    is.na(TS_rule) ~ "None",
+    TRUE ~ paste0(TS_rule*100,"% DLT")
+  ))
+
+drug_family_label <- case_when(
+      drug_family == "immuno_fixed_OBD3_MTD5" ~ "immuno-like profile OBD=3",
+      drug_family == "immuno_fixed_OBD4_MTD5" ~ "immuno-like profile OBD=4",
+      drug_family == "chemo_fixed_MTD5" ~ "chemo-like profile MTD=5"
+    )
+p <- res_ph123_df |>
+  mutate(TS_rule_f = factor(TS_rule,
+                            levels=c("None","45% DLT","40% DLT","35% DLT","30% DLT"))) |>
+  ggplot(aes(x=TS_rule_f,y=Ph123_PoS,color=factor(u2),
+             group = factor(u2)))+
+  geom_point()+
+  geom_line()+
+  theme_bw()+
+  labs(x="Toxicity suspension threshold",
+       y="Phase I-III Probability of Significance (PoS)",
+       title = drug_family_label,
+       color = "Utility for (No efficacy, No toxicity)")+
+  # scale_color_viridis_d()+
+  scale_color_manual(values = c("#440154FF", "#46337EFF", "#365C8DFF", "red",
+                                "#277F8EFF", "#1FA187FF", "#4AC16DFF" ,"#9FDA3AFF", "#FDE725FF"))+
+  theme(
+    legend.position = "right"
+  )
+  return(p)
+},simplify = FALSE)
+# immuno-like
+ggarrange(plotlist = p_list[1:2],ncol = 2,
+          common.legend = TRUE)
+# chemo-like
+p_list[[3]]
+```

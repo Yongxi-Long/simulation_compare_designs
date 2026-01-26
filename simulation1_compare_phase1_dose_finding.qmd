@@ -1,0 +1,593 @@
+---
+title: "Comparison of Phase I dose-finding methods"
+author: "Yongxi Long"
+format: html
+  self-contained: TRUE
+code-fold: true
+editor: visual
+---
+
+## Aim
+
+To evaluate the impact of phase I dose-finding methods on later phase success rate. We compare the following 3 dose-finding method
+
+-   3+3: rule-based method
+-   BOIN: model-assisted method, with some toxicity control
+-   CRM: model-based method, with some toxicity control
+
+We'll look at two types of drug profiles, chemotherapy-like profiles vs. immunotherapy-like profiles
+
+```{r,warning=FALSE,message=FALSE}
+rm(list = ls())
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(ggplot2)
+  library(ggsci)
+  library(RColorBrewer)
+  library(trialr)
+  library(clinfun)
+  library(ggExtra)
+  library(ggridges)
+  library(ggpubr)
+})
+source("functions/combine_res.R")
+```
+
+## Load data
+
+```{r,eval=FALSE}
+# drug_family <- "chemo_fixed_MTD5"
+drug_family <- "immuno_fixed_OBD3_MTD5"
+# drug_family <- "immuno_fixed_OBD4_MTD5"
+load(paste0("data/simulated_data/",drug_family,".RData"))
+drug_data[[1]]$profile_info$DLT_rate
+drug_data[[1]]$profile_info$rsp_rate
+```
+
+## Phase I
+
+```{r,eval=FALSE}
+# trial design parameters
+# sample size
+N <- 30
+# target DLT
+target_DLT <- 0.3
+```
+
+### 3+3 design
+
+```{r,eval=FALSE}
+source("functions/threep3.R")
+res_ph1_threep3 <- vector(mode = "list",length = length(drug_data))
+for(i in 1:length(drug_data))
+{
+res <- run_threep3(data = drug_data[[i]],
+                   N=30)
+res_ph1_threep3[[i]] <- res
+}
+save(res_ph1_threep3,
+     file = paste0("results/res_ph1_fixed_threep3.RData"))
+```
+
+### BOIN design
+
+```{r,eval=FALSE}
+source("functions/BOIN.R")
+# cohort size
+cohort_size= 3
+# BOIN design
+res_ph1_BOIN <- vector(mode = "list",length = length(drug_data))
+for(i in 1:length(drug_data))
+{
+res <- run_BOIN(data = drug_data[[i]],
+                 N=N,
+                 cohort_size = cohort_size,
+                 target_DLT=target_DLT,
+                 tox_bound = 0.95)
+res_ph1_BOIN[[i]] <- res
+}
+save(res_ph1_BOIN,
+     file = paste0("results/res_ph1_fixed_BOIN.RData"))
+```
+
+### CRM
+
+```{r,eval=FALSE}
+source("functions/CRM.R")
+# cohort size
+cohort_size= 1
+# toxicity boundary
+tox_bound <- 0.5
+# from paper Chu et. al
+# Unifying CRM and EWOC designs for Phase I cancer clinical trials
+# CRM without overdose control
+res_ph1_CRM <- vector(mode = "list",length = length(drug_data))
+for(i in 1:length(drug_data))
+{
+  res <- run_CRM(data=drug_data[[i]],
+                    N=N,
+                    cohort_size = cohort_size,
+                    target_DLT=target_DLT,
+                    tox_bound = tox_bound,
+                    model="empiric")
+  res_ph1_CRM[[i]] <- res
+  print(i)
+}
+save(res_ph1_CRM,file = paste0("results/res_ph1_fixed_CRM.RData"))
+```
+
+### EffTox design
+
+```{r,eval=FALSE}
+source("functions/EffTox.R")
+# trial design parameters
+# sample size
+N <- 30
+# cohort size
+cohort_size <- 3
+# Threshold for selecting desirable doses
+efficacy_hurdle <- 0.5 # desired response rate
+toxicity_hurdle <- 0.3 # target DLT
+p_e <- p_t <- 0.05
+# the Contour
+eff0 <- 0.4 # smallest rsp acceptable if there is no toxicity, set to slightly smaller than SOC, p0 = 0.4
+tox1 <- 0.7 # highest DLT acceptable if the rsp is 100%, set to 150% of the target DLT
+# middle neutral utility value
+# slight more toxic than target, and slight less efficacious than target
+eff_star <- 0.65
+tox_star <- 0.25
+p_EffTox <-  trialr::efftox_solve_p(eff0,tox1,eff_star,tox_star)
+# prior guess of DLT/RSP prob for each dose
+pi_T <- dfcrm::getprior(halfwidth = 0.05,target = 0.3,nu=3,nlevel=6,model="empiric")
+pi_E <- dfcrm::getprior(halfwidth = 0.05,target = 0.5,nu=3,nlevel=6,model="empiric")
+# effective sample size for the prior
+ess_T <- ess_E <- 1
+# get normal prior hyperparameters for the EffTox model
+# it can take some time for iterative calculation
+# the dose levels are already scaled between 0-1, it does 
+# not impact the prior hyperparamters that much
+# so for saving time, will use the same (average) actual dose
+# levels for all simulation iteration, although the actual dose
+# levels are different for each iteration
+priors_EffTox <- get_efftox_priors(doses = c(0.1000000, 
+                                             0.2000000, 
+                                             0.3300000, 
+                                             0.5016000, 
+                                             0.7022400, 
+                                             0.9339792),
+                                   pi_T = pi_T,
+                                   ess_T = ess_T,
+                                   pi_E = pi_E,
+                                   ess_E = ess_E)
+```
+
+```{r,eval=FALSE}
+res_ph1_EffTox <- vector(mode = "list",length = length(drug_data))
+for(i in 1:length(drug_data))
+{
+  dat <- drug_data[[i]]
+  res <- suppressWarnings({
+    run_EffTox(
+      data = dat,
+      N=N,
+      cohort_size=cohort_size,
+      efficacy_hurdle = efficacy_hurdle, 
+      toxicity_hurdle = toxicity_hurdle,
+      p_e = p_e, p_t = p_t,
+      eff0 = eff0, tox1 = tox1,
+      eff_star = eff_star, tox_star = tox_star,
+      priors = priors_EffTox)
+  })
+  res_ph1_EffTox[[i]] <- res
+  print(i)
+}
+save(res_ph1_EffTox,file = paste0("results/res_ph1_",drug_family,"_EffTox.RData"))
+```
+
+### BOIN12 design
+
+```{r,eval=FALSE}
+source("functions/BOIN12.R")
+# the toxicity upper limit
+phi_t <- 0.35
+# the efficacy lower limit
+phi_e <- 0.5
+# utility for outcome no tox no response
+u2 <- 40
+# utility for outcome tox yes and response yes
+u3 <- 60
+# when tox is within bounds, 
+# stop exploring higher doses when n at dose is greater than or equal to this value.
+n_star1 <- 6
+# dose-exploration rule, go to the next higher dose if more than this number of patients have been treated at current dose and the current dose is safe enough
+# and the next higher dose has not yet been explored
+n_star2 <- 8
+```
+
+```{r,eval=FALSE}
+res_ph1_BOIN12 <- vector(mode = "list",length = length(drug_data))
+for(i in 1:length(drug_data))
+{
+  dat <- drug_data[[i]]
+  res <- suppressWarnings({
+    run_BOIN12(data = dat,
+               N= N,
+               cohort_size = 3,
+               phi_t = phi_t, phi_e = phi_e,
+               u2 = u2, u3 = u3,
+               n_star1 = n_star1, n_star2 = n_star2)
+  })
+  res_ph1_BOIN12[[i]] <- res
+ # print(i)
+}
+save(res_ph1_BOIN12,file = paste0("results/res_ph1_",drug_family,"_BOIN12.RData"))
+combine_res(res_ph1 = res_ph1_BOIN12)
+```
+
+### Evaluate Phase I dose selection
+
+```{r,echo=FALSE}
+designs <- c("threep3", "BOIN", "CRM")
+drug_families <- c("immuno_fixed_OBD3_MTD5",
+                  "immuno_fixed_OBD4_MTD5",
+                  "chemo_fixed_MTD5")
+RP2D_summary_MTD <- purrr::map_dfr(designs, function(design) {
+  # Load the results
+  load(paste0("results/res_ph1_fixed_", design, ".RData"))
+  # Retrieve the actual object (e.g., res_ph1_threep3)
+  res_ph1_obj <- get(paste0("res_ph1_", design))
+  res <- combine_res(res_ph1 = res_ph1_obj)
+  res <- res$`Table of RP2D` |>
+    select(dose_level,prob_selected) |>
+    mutate(Design = design) |>
+    mutate(Design = factor(Design,levels=c("threep3","BOIN","CRM","EffTox","BOIN12"),
+                           labels = c("Threep3","BOIN","CRM","EffTox","BOIN12"))) |>
+    mutate(Drug_family = "fixed")
+  return(res)
+})
+designs <- c("BOIN12","EffTox")
+RP2D_summary_OBD <- purrr::map_dfr(designs,function(design)
+  {
+  df <- purrr::map_dfr(drug_families,function(drug_family)
+{
+  load(paste0("results/res_ph1_",drug_family,"_",design,".RData"))
+  # Retrieve the actual object (e.g., res_ph1_threep3)
+  res_ph1_obj <- get(paste0("res_ph1_", design))
+  res <- combine_res(res_ph1 = res_ph1_obj)
+  res <- res$`Table of RP2D` |>
+    select(dose_level,prob_selected) |>
+    mutate(Design = design) |>
+    mutate(Design = factor(Design,levels=c("threep3","BOIN","CRM","EffTox","BOIN12"),
+                           labels = c("Threep3","BOIN","CRM","EffTox","BOIN12"))) |>
+    mutate(Drug_family = case_when(
+      drug_family == "immuno_fixed_OBD3_MTD5" ~ "immuno OBD=3",
+      drug_family == "immuno_fixed_OBD4_MTD5" ~ "immuno OBD=4",
+      drug_family == "chemo_fixed_MTD5" ~ "chemo MTD=5"
+    ))
+  return(res)
+})
+  return(df)
+})
+p1 <- RP2D_summary_MTD |>
+  ggplot(aes(x = Design, y = prob_selected, fill = factor(dose_level))) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8)) +
+  theme_bw() +
+  labs(
+    x = "Design",
+    y = "Probability of Selection",
+    fill = "RP2D",
+    title = "Unvariate Designs"
+  )+
+  geom_text(aes(label = round(prob_selected, 2)),  # text labels
+            position = position_dodge(width = 0.8), 
+            vjust = -0.3,                          # vertical position (above bar)
+            size = 2,
+            angle = 45)+
+  scale_fill_viridis_d(option = "viridis",na.value="grey80")+
+  theme(
+    title = element_text(size=8),
+    axis.text.x = element_text(size=7),
+    axis.title = element_text(size=8)
+  )+
+  ylim(0,0.7)
+
+p2 <- RP2D_summary_OBD |>
+  filter(Design=="EffTox") |>
+  ggplot(aes(x = Drug_family, y = prob_selected, fill = factor(dose_level))) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8)) +
+  theme_bw() +
+  labs(
+    x = "Drug family",
+    y = "Probability of Selection",
+    fill = "RP2D",
+    title = "EffTox"
+  )+
+  geom_text(aes(label = round(prob_selected, 2)),  # text labels
+            position = position_dodge(width = 0.8), 
+            vjust = -0.3,                          # vertical position (above bar)
+            size = 2,
+            angle = 45)+
+  scale_fill_viridis_d(option = "viridis",na.value="grey80")+
+  theme(
+    title = element_text(size=8),
+    axis.text.x = element_text(size=7),
+    axis.title = element_text(size=8)
+  )+
+  ylim(0,0.7)
+
+p3 <- RP2D_summary_OBD |>
+  filter(Design=="BOIN12") |>
+  ggplot(aes(x = Drug_family, y = prob_selected, fill = factor(dose_level))) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8)) +
+  theme_bw() +
+  labs(
+    x = "Drug family",
+    y = "Probability of Selection",
+    fill = "RP2D",
+    title = "BOIN12"
+  )+
+  geom_text(aes(label = round(prob_selected, 2)),  # text labels
+            position = position_dodge(width = 0.8), 
+            vjust = -0.3,                          # vertical position (above bar)
+            size = 2,
+            angle = 45)+
+  scale_fill_viridis_d(option = "viridis",na.value="grey80")+
+  theme(
+    title = element_text(size=8),
+    axis.text.x = element_text(size=7),
+    axis.title = element_text(size=8)
+  )+
+  ylim(0,0.7)
+
+plot <- ggarrange(p1,p2,p3,nrow=2,ncol=2,common.legend = TRUE,
+          legend = "right")
+plot
+# ggsave(filename = paste0("C:\\Users\\ylong\\OneDrive - LUMC\\Projects\\Impacts_early_phase_trial_methods\\plots\\Phase1_dose_selection.png"),
+#        plot = plot,
+#        dpi=320,
+#        width = 7,
+#        height = 5,
+#        units = "in")
+```
+
+## Phase II
+
+### Simon's two-stage design
+
+We first supply clinical information to get design parameters for the Simon's two-stage design
+
+```{r,eval=FALSE}
+source("functions/simon2stage.R")
+design_para <- simon2stage_design(p0=0.4,
+                                  p1=0.5)
+drug_family <- "chemo_fixed_MTD5"
+load(paste0("data/simulated_data/",drug_family,".RData"))
+```
+
+```{r,eval=FALSE}
+# different extent of toxicity control at Phase II
+# noTS: no toxicity induced trial suspension
+TS_rules <- list(NULL,0.45,0.40,0.35,0.30)
+for(TS in TS_rules)
+{
+  res_ph2_simon2stage <- vector(mode = "list",length = length(drug_data))
+  for (i in 1:length(drug_data))
+  {
+    res <- run_simon2stage(
+    data = drug_data[[i]],
+    design_para = design_para,
+    suspend_threshold = TS,
+    suspend_window = 30)
+    res_ph2_simon2stage[[i]] <- res
+  }
+save(res_ph2_simon2stage,file = paste0("results/res_ph2_",drug_family,
+                                       "_simon2stage_TS",TS,".RData"))
+}
+```
+
+### Combine Phase I-II results
+
+```{r,eval=FALSE}
+#drug_family <- "chemo_fixed_MTD5"
+#drug_family <- "immuno_fixed_OBD3_MTD5"
+drug_family <- "immuno_fixed_OBD4_MTD5"
+TS_rules <- list(NULL,0.45,0.40,0.35,0.30)
+designs <- c("threep3", "BOIN", "CRM","EffTox")
+# for CRM design
+# different extend of toxicity control in Phase II
+res_ph12_df <- purrr::map_dfr(TS_rules,function(TS)
+  {
+  load(paste0("results/res_ph2_",drug_family,"_simon2stage_TS",TS,".RData"))
+  
+  out <- purrr::map_dfr(designs,function(design)
+  {
+    if(design == "EffTox")
+    {
+      load(paste0("results/res_ph1_",drug_family,"_",design, ".RData"))
+    } else
+    {
+      load(paste0("results/res_ph1_fixed_", design, ".RData"))
+    }
+    res_ph1_obj <- get(paste0("res_ph1_", design))
+    res <- combine_res(res_ph1 = res_ph1_obj,res_ph2 = res_ph2_simon2stage)
+    out <- data.frame(
+      Ph12_PoS = res$`Phase I-II probability of significance`,
+      Ph2_PoTS = res$`Phase II probability of toxicity suspension`
+    ) |>
+      mutate(Design = design)
+    return(out)
+  })
+  out <- out |>
+    mutate( TS_rule = TS
+    )
+  return(out)
+})
+res_ph12_df <- res_ph12_df |>
+  mutate(TS_rule = case_when(
+    is.na(TS_rule) ~ "None",
+    TRUE ~ paste0(TS_rule*100,"% DLT")
+  ))
+
+p1 <- res_ph12_df |>
+  mutate(TS_rule_f = factor(TS_rule,
+                            levels=c("None","45% DLT","40% DLT","35% DLT","30% DLT"))) |>
+  ggplot(aes(x=TS_rule_f,y=Ph12_PoS,color=Design,
+             group = Design))+
+  geom_point()+
+  geom_line()+
+  theme_bw()+
+  labs(x="Toxicity suspension threshold",
+       y="Phase I-II Probability of Significance (PoS)",
+     #  title = "Phase I-II results",
+       color = "Dose-finding method")+
+  scale_color_nejm()
+
+p2 <- res_ph12_df |>
+  mutate(TS_rule_f = factor(TS_rule,
+                            levels=c("None","45% DLT","40% DLT","35% DLT","30% DLT"))) |>
+  ggplot(aes(x=TS_rule_f,y=Ph2_PoTS,color=Design,
+             group = Design))+
+  geom_point()+
+  geom_line()+
+  theme_bw()+
+  labs(x="Toxicity suspension threshold",
+       y="Phase II Probability of Toxicity Suspension (PoTS)",
+    #   title = "Phase I-II results",
+       color = "Dose-finding method")+
+  scale_color_nejm()
+
+p12 <- ggarrange(p1,p2,ncol = 2,legend = "top",
+          common.legend = TRUE)
+
+annotate_figure(
+  p = p12,
+  top = text_grob(paste0("Drug profile: ",drug_family))
+)
+```
+
+## Phase III
+
+### RCT design
+
+We use the RCT_design function to help us do a sample size calculation
+
+```{r,eval=FALSE}
+source("functions/RCT.R")
+design_para <- RCT_design(hazard0 = log(2)/14,hazard1 = log(2)/19,
+                          t_FU = 60, t_accrual = 12)
+drug_family <- "chemo_fixed_MTD5"
+load(paste0("data/simulated_data/",drug_family,".RData"))
+```
+
+```{r,eval=FALSE}
+TS_rules <- list(NULL,0.45,0.40,0.35,0.30)
+for(TS in TS_rules)
+{
+res_ph3_RCT <- vector(mode = "list",length = length(drug_data))
+for (i in 1:length(drug_data))
+{
+  res <- run_RCT(
+  data = drug_data[[i]],
+  design_para = design_para,
+  suspend_threshold = TS,
+  suspend_window = 30)
+  res_ph3_RCT[[i]] <- res
+  print(i)
+}
+save(res_ph3_RCT,file = paste0("results/res_ph3_",
+                               drug_family,"_RCT_TS",TS,".RData"))
+}
+```
+
+### Combine Phase I-III results
+
+```{r}
+for(drug_family in c("chemo_fixed_MTD5",
+                     "immuno_fixed_OBD3_MTD5",
+                     "immuno_fixed_OBD4_MTD5"))
+{
+TS_rules <- list(NULL,0.45,0.40,0.35,0.30)
+designs_univar <- c("threep3", "BOIN", "CRM")
+designs_bivar <- c("EffTox","BOIN12")
+designs <- c(designs_univar,designs_bivar)
+res_ph123_df <- purrr::map_dfr(TS_rules,function(TS)
+  {
+  load(paste0("results/res_ph2_",drug_family,"_simon2stage_TS",TS,".RData"))
+  load(paste0("results/res_ph3_",drug_family,"_RCT_TS",TS,".RData"))
+  out <- purrr::map_dfr(designs,function(design)
+  {
+    if(design %in% designs_bivar)
+    {
+      load(paste0("results/res_ph1_",drug_family,"_",design, ".RData"))
+    } else
+    {
+      load(paste0("results/res_ph1_fixed_", design, ".RData"))
+    }
+    res_ph1_obj <- get(paste0("res_ph1_", design))
+    res <- combine_res(res_ph1 = res_ph1_obj,
+                       res_ph2 = res_ph2_simon2stage,
+                       res_ph3 = res_ph3_RCT)
+    out <- data.frame(
+      Ph123_PoS = res$`Phase I-III probability of significance`,
+      Ph23_PoTS = res$`Phase II&III probability of toxicity suspension`
+    ) |>
+      mutate(Design = design)
+    return(out)
+  })
+  out <- out |>
+    mutate( TS_rule = TS
+    )
+  return(out)
+})
+res_ph123_df <- res_ph123_df |>
+  mutate(TS_rule = case_when(
+    is.na(TS_rule) ~ "None",
+    TRUE ~ paste0(TS_rule*100,"% DLT")
+  ))
+
+p1 <- res_ph123_df |>
+  mutate(TS_rule_f = factor(TS_rule,
+                            levels=c("None","45% DLT","40% DLT","35% DLT","30% DLT"))) |>
+  ggplot(aes(x=TS_rule_f,y=Ph123_PoS,color=Design,
+             group = Design))+
+  geom_point()+
+  geom_line()+
+  theme_bw()+
+  labs(x="Toxicity suspension threshold",
+       y="Phase I-III Probability of Significance (PoS)",
+     #  title = "Phase I-II results",
+       color = "Dose-finding method")+
+  scale_color_nejm()
+
+p2 <- res_ph123_df |>
+  mutate(TS_rule_f = factor(TS_rule,
+                            levels=c("None","45% DLT","40% DLT","35% DLT","30% DLT"))) |>
+  ggplot(aes(x=TS_rule_f,y=Ph23_PoTS,color=Design,
+             group = Design))+
+  geom_point()+
+  geom_line()+
+  theme_bw()+
+  labs(x="Toxicity suspension threshold",
+       y="Phase II&III Probability of Toxicity Suspension (PoTS)",
+    #   title = "Phase I-II results",
+       color = "Dose-finding method")+
+  scale_color_nejm()+
+  theme(
+    axis.title = element_text(size=10)
+  )
+
+p12 <- ggarrange(p1,p2,ncol = 2,legend = "top",
+          common.legend = TRUE)
+
+plot <- annotate_figure(
+  p = p12,
+  top = text_grob(paste0("Drug profile: ",drug_family))    
+)
+ggsave(filename = paste0("C:\\Users\\ylong\\OneDrive - LUMC\\Projects\\Impacts_early_phase_trial_methods\\plots\\PoS_",drug_family,".png"),
+       plot = plot,
+       dpi=320,
+       width = 7,
+       height = 5,
+       units = "in")
+}
+```

@@ -2,7 +2,7 @@ run_CRM <- function(data,
                     N,
                     cohort_size = 1,
                     target_DLT,
-                    tox_bound = 0.2,
+                    tox_bound = 0.75,
                     skeleton=NULL,
                     model="empiric",
                     a0 = NULL,
@@ -78,9 +78,13 @@ run_CRM <- function(data,
     #########################
     # get posterior probability that the current dose is above the MTD
     # P(p_T(d) > target_DLT|data), i.e., Pr(toxicity prob at dose d exceeds target DLT)
-    # get a sample from the posterior 
-    posterior_sample <- as.data.frame(fit_CRM)
-    prob_exceeds_target_DLT <- colMeans(posterior_sample[,2:(ndoses+1)] > target_DLT)
+    # get a sample from the posterior
+    prob_exceeds_target_DLT <- fit_CRM |>
+      gather_draws(prob_tox[dose]) |>
+      group_by(dose) |>
+      summarise(prob_exceeds_target_DLT = mean(.value > target_DLT)) |>
+      select(prob_exceeds_target_DLT) |>
+      unlist()
     # see if the recommended dose has Pr(toxicity prob at dose d exceeds target DLT) <= tox_bound
     admissible_doses <- which(prob_exceeds_target_DLT <= tox_bound) |> as.numeric()
     if(length(admissible_doses)==0)

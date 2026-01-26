@@ -74,6 +74,25 @@ run_EffTox <- function(data,
     # Get next recommended dose
     next_dose <- fit_EffTox$recommended_dose
     
+    # EffTox sometimes recommend to stop when there is not enough responses
+    # we will overwrite this decision when not all doses have been explored
+    # we will recommend the next dose to be the maximum dose for which the 
+    # posterior mean probabilities that toxicity at the doses is acceptable is larger than the toxicity hurdle
+    if(is.na(next_dose)  & max(fit_EffTox$doses) < ndoses)
+    {
+      candidate_dose <- current_dose + 1 
+      # force to go to next dose,if next dose has not yet been explored
+      if(!(candidate_dose %in% dose_history))
+      {
+        next_dose <- candidate_dose
+      } else
+      {
+        # if next dose has been explored, check if it has acceptable toxicity
+        check_tox <- fit_EffTox$prob_acc_tox[candidate_dose] > p_t
+        next_dose <- ifelse(check_tox,candidate_dose,NA)
+      }
+    }
+    
     # Check for stopping
     if (is.na(next_dose) | next_dose < 1 | next_dose > ndoses) {
       cat("Trial stopped early at", max(cohort_ids), "patients.\n")

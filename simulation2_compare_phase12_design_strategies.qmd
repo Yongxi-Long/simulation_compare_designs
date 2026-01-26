@@ -10,10 +10,10 @@ editor: visual
 
 To evaluate the impact of early phase design strategies on later phase success rate. We mainly compare two strategies to evaluate whether it is more efficient to invest more in Phase I or in Phase II:
 
--   Consider both toxicity and efficacy in Phase I (univariate CRM), carry one dose into Phase II
--   Consider only toxicity in Phase I (bivariate CRM), carry two doses into Phase II
+-   Consider both toxicity and efficacy in Phase I (EffTox), carry one dose into Phase II
+-   Consider only toxicity in Phase I (CRM), carry two doses into Phase II
 
-We'll look at three types of drug profiles, where the dose-efficacy/survival relationships plateau before/around/after the MTD.
+We'll look at two types of drug profiles, chemotherapy-like profiles vs. immunotherapy-like profiles
 
 ```{r,warning=FALSE,message=FALSE}
 rm(list = ls())
@@ -26,39 +26,29 @@ suppressPackageStartupMessages({
   library(clinfun)
   library(ggExtra)
   library(ggridges)
+  library(ggpubr)
 })
 ```
 
 ## Load data
 
 ```{r}
-drug_family <- "immuno"
+drug_family <- "immuno_fixed"
 load(paste0("data/simulated_data_",drug_family,".RData"))
 ```
 
-## Phase I
-
-### CRM design
+### Escalation with overdose control (EWOC)
 
 ```{r}
 source("functions/CRM.R")
-# trial design parameters
-# sample size
-N <- 30
 # cohort size
 cohort_size= 1
-# target DLT
-target_DLT <- 0.3
 # overdose control
 # toxicity bound, if Pr(toxcitiy prob at dose j > target DLT) > tox_bound
 # or Equivalently Pr(toxcitiy prob at dose j < target DLT) < 1 - tox_bound
 # this dose will be inadmissible even if it may be recommended by the model
 tox_bound <- 0.25
-```
-
-```{r}
-# CRM without overdose control
-res_ph1_CRM <- vector(mode = "list",length = length(drug_data))
+res_ph1_EWOC <- vector(mode = "list",length = length(drug_data))
 for(i in 1:length(drug_data))
 {
   res <- run_CRM(data=drug_data[[i]],
@@ -67,10 +57,10 @@ for(i in 1:length(drug_data))
                     target_DLT=target_DLT,
                     tox_bound = tox_bound,
                     model="empiric")
-  res_ph1_CRM[[i]] <- res
+  res_ph1_EWOC[[i]] <- res
   print(i)
 }
-save(res_ph1_CRM,file = paste0("results/res_ph1_",drug_family,"_CRM_OC25.RData"))
+save(res_ph1_EWOC,file =paste0("results/res_ph1_",drug_family,"_EWOC_OC",100*tox_bound,".RData"))
 ```
 
 ### EffTox design
@@ -93,7 +83,7 @@ eff0 <- 0.35 # smallest rsp acceptable if there is no toxicity, set to same as S
 tox1 <- 0.45 # highest DLT acceptable if the rsp is 100%, set to 150% of the target DLT
 eff_star <- 0.4
 tox_star <- 0.25
-p_EffTox <- efftox_solve_p(eff0,tox1,eff_star,tox_star)
+p_EffTox <-  trialr::efftox_solve_p(eff0,tox1,eff_star,tox_star)
 # prior guess of DLT/RSP prob for each dose
 pi_T <- dfcrm::getprior(halfwidth = 0.05,target = 0.3,nu=3,nlevel=5,model="empiric")
 pi_E <- dfcrm::getprior(halfwidth = 0.05,target = 0.45,nu=3,nlevel=5,model="empiric")
@@ -141,19 +131,31 @@ save(res_ph1_EffTox,file = paste0("results/res_ph1_",drug_family,"_EffTox.RData"
 
 ```{r}
 RP2D_CRM <- sapply(res_ph1_CRM,function(x) x$RP2D)
+RP2D_EWOC <- sapply(res_ph1_EWOC, function(x) x$RP2D)
 RP2D_EffTox <- sapply(res_ph1_EffTox, function(x) x$RP2D)
-RP2D_summary <- data.frame(RP2D = factor(c(RP2D_CRM,RP2D_EffTox),levels=1:5),
-                           Design = rep(c("CRM","EffTox"),
+RP2D_summary <- data.frame(RP2D = factor(c(RP2D_CRM,RP2D_EWOC,RP2D_EffTox),
+                                         levels=1:5),
+                           Design = rep(c("CRM","EWOC","EffTox"),
                                         c(length(RP2D_CRM),
+                                          length(RP2D_EWOC),
                                           length(RP2D_EffTox)))) 
-RP2D_summary |>
+RP2D_summary <- RP2D_summary |>
   group_by(Design, RP2D,.drop=FALSE) |>
   summarize(n=n()) |>
   mutate(Prob_selected = n/sum(n))|>
   select(-n) |>
   ungroup()
-```
 
+RP2D_summary |>
+  ggplot(aes(x = Design, y = Prob_selected, fill = factor(RP2D))) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8)) +
+  theme_bw() +
+  labs(
+    x = "Design",
+    y = "Probability of Selection",
+    fill = "RP2D"
+  )
+```
 
 #### Plot of the true OBD vs. selected by CRM/EffTox
 
@@ -218,7 +220,7 @@ ggMarginal(p1,
 
 #### Risk/efficacy exposure assessment
 
-See the true DLT rates/response rates of doses that patients were assigned to 
+See the true DLT rates/response rates of doses that patients were assigned to
 
 ```{r}
 DLT_rate_all <- RSP_rate_all <- design_all <- numeric()
@@ -300,55 +302,124 @@ for (i in 1:length(drug_data))
   res <- run_simon2stage(
   data = drug_data[[i]],
   design_para = design_para,
-  suspend_threshold = 0.3,
+  suspend_threshold = NULL,
   suspend_window = 30)
   
   res_ph2_simon2stage[[i]] <- res
 }
-#save(res_ph2_simon2stage,file = paste0("results/res_ph2_",drug_family,"_simon2stage_TS30.RData"))
+save(res_ph2_simon2stage,file = paste0("results/res_ph2_",drug_family,"_simon2stage_TSnone.RData"))
 ```
 
 ## Combine Phase I-II results
 
 ```{r}
-# extract RP2D from Phase I results
-RP2D_CRM <- sapply(res_ph1_CRM,function(x) x$RP2D)
-RP2D_EffTox <- sapply(res_ph1_EffTox, function(x) x$RP2D)
+TS_rule <- c("none","45","40","35","30")
+res_ph12_df <- data.frame(
+  ph1_method = rep(c("CRM","EWOC","EffTox"),each=5),
+  ph2_TS  = rep(TS_rule,3),
+  ph2_PoTS = NA,
+  ph12_PoS = NA
+)
+# for CRM design
+# different extend of toxicity control in Phase II
+for(TS in TS_rule)
+{
+  load(paste0("results/res_ph2_",drug_family,"_simon2stage_TS",TS,".RData"))
+  res_ph12_CRM <- combine_res(res_ph1 = res_ph1_CRM,
+            res_ph2 = res_ph2_simon2stage)
+  res_ph12_df[res_ph12_df$ph1_method=="CRM" & res_ph12_df$ph2_TS==TS,][c("ph12_PoS","ph2_PoTS")] <- c(res_ph12_CRM$`Phase I-II probability of significance`,
+                                                                                                         res_ph12_CRM$`Phase II probability of toxicity suspension`)
+  
+  res_ph12_EWOC <- combine_res(res_ph1 = res_ph1_EWOC,
+            res_ph2 = res_ph2_simon2stage)
+  res_ph12_df[res_ph12_df$ph1_method=="EWOC" & res_ph12_df$ph2_TS==TS,][c("ph12_PoS","ph2_PoTS")] <- c(res_ph12_EWOC$`Phase I-II probability of significance`,
+                                                                                                         res_ph12_EWOC$`Phase II probability of toxicity suspension`)
+  
+  res_ph12_EffTox <- combine_res(res_ph1 = res_ph1_EffTox,
+            res_ph2 = res_ph2_simon2stage)
+  res_ph12_df[res_ph12_df$ph1_method=="EffTox" & res_ph12_df$ph2_TS==TS,][c("ph12_PoS","ph2_PoTS")] <- c(res_ph12_EffTox$`Phase I-II probability of significance`,
+                                                                                                         res_ph12_EffTox$`Phase II probability of toxicity suspension`)
+}
 ```
 
-
-### Probability of overall success
+### Probability of Significance (PoS)
 
 ```{r}
-ph2_success_per_dose <- t(sapply(res_ph2_simon2stage, function(i) i$reject_H0))
-# see the conditional phase II result given Phase I dose selection
-res_ph12_CRM <- rep(NA,length(RP2D_CRM))
-idx <- !is.na(RP2D_CRM)
-res_ph12_CRM[idx] <- ph2_success_per_dose[cbind(which(idx),RP2D_CRM[idx])]
-power_ph12_CRM <- mean(res_ph12_CRM,na.rm = TRUE)
-cat("The combined Phase I-II success rate for CRM is ",power_ph12_CRM,"\n")
-
-res_ph12_EffTox <- rep(NA,length(RP2D_EffTox))
-idx <- !is.na(RP2D_EffTox)
-res_ph12_EffTox[idx] <- ph2_success_per_dose[cbind(which(idx),RP2D_EffTox[idx])]
-power_ph12_EffTox <- mean(res_ph12_EffTox,na.rm = TRUE)
-cat("The combined Phase I-II success rate for EffTox is ",power_ph12_EffTox,"\n")
+p1 <- res_ph12_df |>
+  mutate(ph2_TS_f = factor(ph2_TS,levels=c("none","45","40","35","30"),
+                           labels=c("None","45% DLT","40% DLT","35% DLT","30% DLT"))) |>
+  ggplot(aes(x=ph2_TS_f,y=ph12_PoS,color=ph1_method,
+             group = ph1_method))+
+  geom_point()+
+  geom_line()+
+  theme_bw()+
+  labs(x="Toxixity suspension threshold based on DLT rate",
+       y="Probability of Significance (PoS)",
+       title = "Phase I-II results",
+       color = "Dose-finding method")+
+  scale_color_nejm()
+p1
 ```
-### Probability of trial suspension due to excess toxicity
+
+### Probability of suspending Phase II trial due to excess toxicity
 
 ```{r}
-ph2_suspension_per_dose <- t(sapply(res_ph2_simon2stage, function(i) i$suspend_tox))
-# see the conditional phase II result given Phase I dose selection
-res_ph12_CRM <- rep(NA,length(RP2D_CRM))
-idx <- !is.na(RP2D_CRM)
-res_ph12_CRM[idx] <- ph2_suspension_per_dose[cbind(which(idx),RP2D_CRM[idx])]
-TS_ph12_CRM <- mean(res_ph12_CRM,na.rm = TRUE)
-cat("The Phase II suspesion rate due to excess toxicity for CRM is ",TS_ph12_CRM,"\n")
+p2 <- res_ph12_df |>
+  mutate(ph2_TS_f = factor(ph2_TS,levels=c("none","45","40","35","30"),
+                           labels=c("None","45% DLT","40% DLT","35% DLT","30% DLT"))) |>
+  ggplot(aes(x=ph2_TS_f,y=ph2_PoTS,color=ph1_method,
+             group = ph1_method))+
+  geom_point()+
+  geom_line()+
+  theme_bw()+
+  labs(x="Toxixity suspension threshold based on DLT rate",
+       y="Probability of Toxicity Suspension (PoTS)",
+       title = "Phase I-II results",
+       color = "Dose-finding method")+
+  scale_color_nejm()
+p2
 
-res_ph12_EffTox <- rep(NA,length(RP2D_EffTox))
-idx <- !is.na(RP2D_EffTox)
-res_ph12_EffTox[idx] <- ph2_suspension_per_dose[cbind(which(idx),RP2D_EffTox[idx])]
-TS_ph12_EffTox <- mean(res_ph12_EffTox,na.rm = TRUE)
-cat("The Phase II suspesion rate due to excess toxicity for EffTox is ",TS_ph12_EffTox,"\n")
+ggarrange(p1,p2,ncol=2,common.legend = TRUE)
 ```
 
+## Phase III
+
+We use the RCT_design function to help us do a sample size calculation
+
+```{r}
+source("functions/RCT.R")
+design_para <- RCT_design(hazard0 = log(2)/14,hazard1 = log(2)/19,
+                          t_FU = 60, t_accrual = 12)
+```
+
+```{r}
+res_ph3_RCT <- vector(mode = "list",length = length(drug_data))
+for (i in 1:length(drug_data))
+{
+  res <- run_RCT(
+  data = drug_data[[i]],
+  design_para = design_para,
+  suspend_threshold = 0.45)
+  
+  res_ph3_RCT[[i]] <- res
+}
+save(res_ph3_RCT,file = paste0("results/res_ph3_",drug_family,"_RCT_TS45.RData"))
+```
+
+### Combine Phase I-III results
+
+#### Probability of overall success
+
+```{r}
+drug_family <- "immuno"
+TS <- "none"
+load(paste0("results/res_ph2_",drug_family,"_simon2stage_TS",TS,".RData"))
+load(paste0("results/res_ph3_",drug_family,"_RCT_TS",TS,".RData"))
+combine_res(res_ph1 = res_ph1_CRM,
+            res_ph2 = res_ph2_simon2stage,
+            res_ph3 = res_ph3_RCT)
+
+combine_res(res_ph1 = res_ph1_EffTox,
+            res_ph2 = res_ph2_simon2stage,
+            res_ph3 = res_ph3_RCT)
+```
