@@ -2,7 +2,8 @@ run_threep3 <- function(data,
                         N,
                         A = 3, B= 3,
                         C=1, D=1, E=1,
-                        quite = TRUE)
+                        quite = TRUE,
+                        drug_detail = TRUE)
 {
   # Extract dose levels
   doses <- data$profile_info$dose
@@ -112,7 +113,7 @@ run_threep3 <- function(data,
   
   out$RP2D <- RP2D
   # profile info for RP2D
-  if(is.na(RP2D))
+  if(is.na(RP2D)| drug_detail==FALSE)
   {
     out$RP2D_info <- NA
   } else

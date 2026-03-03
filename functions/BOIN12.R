@@ -144,7 +144,7 @@ while (p_id <= N) {
   }
   
   # Check for stopping
-  if (is.na(next_dose) | next_dose < 1 | next_dose > ndoses) {
+  if ((is.na(next_dose) | next_dose < 1 | next_dose > ndoses) & max(cohort_ids) < N) {
     cat("Trial stopped early at", max(cohort_ids), "patients.\n")
     stopped <- 1
     break

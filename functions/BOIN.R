@@ -4,7 +4,8 @@ run_BOIN <- function(data,
                      target_DLT,
                      p_L = NULL, p_U = NULL,
                      tox_bound = 0.95,
-                     prior = c(1,1)
+                     prior = c(1,1),
+                     drug_detail = TRUE
                      )
 {
   # Extract dose levels
@@ -111,35 +112,40 @@ run_BOIN <- function(data,
     } else
     {
       # in case all admissible doses are lower than the next dose
+      # or the next dose is 0
       next_dose <- min(next_dose,max(admissible_doses))
     }
     # Check for stopping
     if (is.na(next_dose) | next_dose < 1 | next_dose > ndoses) {
       cat("Trial stopped early at", max(cohort_ids), "patients.\n")
-      break
+      stopped <- 1
     }
     
     # Update dose and patient ID
     current_dose <- next_dose
     p_id <- max(cohort_ids) + 1
   } # end of while() loop
-
-  # estimate MTD from trial data using Isonotic regression
-  mtd.obj <- BOIN::select.mtd(target = target_DLT,
-                              npts = n_per_dose,
-                              ntox = DLT_per_dose,
-                              cutoff.eli = tox_bound,
-                              boundMTD = TRUE,
-                              p.tox = p_U)
+  if(stopped)
+  {
+    RP2D <- NA
+  } else
+  {
+    # estimate MTD from trial data using Isonotic regression
+    mtd.obj <- BOIN::select.mtd(target = target_DLT,
+                                npts = n_per_dose,
+                                ntox = DLT_per_dose,
+                                cutoff.eli = tox_bound,
+                                boundMTD = TRUE,
+                                p.tox = p_U)
+    # recommended phase 2 dose (RP2D)
+    RP2D <- mtd.obj$MTD
+  }
 
   #prepare output
   out <- list()
-  # recommended phase 2 dose (RP2D)
-  RP2D <- mtd.obj$MTD
-  
   out$RP2D <- RP2D
   # profile info for RP2D
-  if(is.na(RP2D))
+  if(is.na(RP2D) | drug_detail == FALSE)
   {
     out$RP2D_info <- NA
   } else

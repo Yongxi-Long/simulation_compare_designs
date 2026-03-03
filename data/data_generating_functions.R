@@ -278,7 +278,10 @@ plot_drug_profiles <- function(type="immuno",
                                k_rsp=NULL,a_rsp=NULL,b_rsp=NULL,L_rsp,
                                k_surv=NULL,a_surv=NULL,b_surv=NULL,L_surv,
                                scale_surv,offset_surv,
-                               target_DLT=0.3)
+                               target_DLT=0.3,
+                               target_TRR = 0.5,
+                               target_OS=20,
+                               plot_title = NULL)
 {
   DLT_rates <- scaled_logistic_curve(dose_levels,
                                      k=k_tox,
@@ -313,13 +316,19 @@ plot_drug_profiles <- function(type="immuno",
   )
   p1 <- profile_df |>
     filter(type!="Median OS") |>
-    ggplot(aes(x=dose, y=value,color=type))+
+    ggplot(aes(x=dose, y=value,color=type,
+               linetype = type))+
     geom_line()+
     geom_point()+
     theme_bw()+
     labs(x="Dose levels",y="Rate")+
     scale_color_manual(values = c("#646c94","#b84b2d"))+
-    geom_hline(yintercept = target_DLT,linetype=2,linewidth=0.8,color="darkgrey")
+    scale_linetype_manual(values = c(1,2))+
+    geom_hline(yintercept = target_DLT,linetype=2,linewidth=0.7,color="#646c94",alpha=0.7)+
+    geom_hline(yintercept = target_TRR,linetype=2,linewidth=0.7,color="#b84b2d",alpha=0.7)+
+    theme(
+      legend.position = "none"
+    )
   
   p2 <- profile_df |>
     filter(type=="Median OS") |>
@@ -327,8 +336,14 @@ plot_drug_profiles <- function(type="immuno",
     geom_line()+
     geom_point()+
     theme_bw()+
-    labs(x="Dose levels",y="Month")+
-    scale_color_manual(values =  c("orange2"))
-  plot <- ggpubr::ggarrange(p1,p2,ncol=2,legend = "top")
+    labs(x="Dose levels",y="Median OS (Month)")+
+    scale_color_manual(values =  c("orange2"))+
+    geom_hline(yintercept = target_OS,linetype=2,linewidth=0.7,color="orange2",alpha=0.7)+
+    theme(
+      legend.position = "none"
+    )
+  plot <- ggpubr::ggarrange(p1,p2,ncol=2)
+  plot <- annotate_figure(plot,top=text_grob(plot_title,
+                   face = "bold",size=12))
   return(plot)
 }

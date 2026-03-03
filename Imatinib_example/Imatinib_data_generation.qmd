@@ -1,0 +1,441 @@
+---
+title: "Generate patient data from Imatinib profile"
+author: "Yongxi Long"
+format: 
+  html: 
+    self-contained: true
+toc: true
+editor: visual
+---
+
+## Aim
+
+Generate Phase 1-3 patient-level trial data under real-world-data derived Imatinib profile.
+
+```{r,warning=FALSE,echo=FALSE}
+rm(list = ls())
+suppressPackageStartupMessages(
+  {
+    library(ggplot2)
+    library(ggsci)
+    library(dplyr)
+    library(mrgsolve)
+    library(ggpubr)
+    library(kableExtra)
+  }
+)
+# source the exposure generation function
+source("Imatinib_generate_exposure.R")
+source("Imatinib_exposure_tox.R")
+source("Imatinib_exposure_rsp.R")
+source("Imatinib_exposure_surv.R")
+```
+
+## Data generation based on dose-exposure-toxicity/response/survival
+
+A specific dose of a drug corresponds to certain DLT rate, response rate, and hazard rate. We call the collection of dose-toxicity, dose-response, dose-survival relationships the *profile* for the drug.
+
+The challenge in creating drug profiles under different doses is that in later phase drug development, only one or two doses have been investigated. Therefore, there is limited information on response rates and survival times of doses that were not carried on to Phase 2 and Phase 3.
+
+PK/PD data are usually monitored throughout all phases of the trials. Due to heterogeneity in individual absorption/clearance rate, patient cohort that receives that same dose will still have different serum concentrations of the drug. As a result, we can use drug exposure as a surrogate for drug dose and model the exposure-toxicity, exposure-response, exposure-survival relationships instead.
+
+The data generation is divided into two steps:
+
+**Step 1**, we generate the exposure data for the patient cohort based on their relevant pharmacological characteristics (@fig-Cmin-trajectory).
+
+-   Each patient has his/her white blood cell count (WBC) and albumin level (ALB) that affects the absorption and clearance
+-   The exposure outcome is $C_{min}$, defined as the trough concentration of drug in the plasma during a repeated dosing regimen, i.e. the drug concentration immediately prior to the administration of a subsequent dose.
+-   One-compartment PK model. We use the $C_{min}$ at steady-state (240 hours).
+
+```{r,echo=FALSE,eval=FALSE}
+set.seed(86)
+N <- 8 # small sample for illustration
+#Imatinib doses: 400, 600, 800, 1000
+dose_levels <- c(400,600,800,1000)
+data_exposure <- imatinib_exp(dose_levels = dose_levels,
+                              N= N,
+                              population = "specific",
+                              rho= -0.5,
+                              time = "all")
+plot_list <- sapply(dose_levels, function(dose)
+  {
+  df <- data_exposure[data_exposure$dose==dose,]
+  p <-  ggplot(df,aes(x=time, y =Cmin,color=factor(ID)))+
+                geom_line()+
+                theme_bw()+
+                scale_color_nejm()+
+                labs(x="Time (hour)",
+                     y="Simulated Cmin (ug/L)",
+                     title = paste0("Imatinib dose ",dose,"mg"))+
+                theme(
+                  legend.position = ""
+                )+
+    ylim(c(0,15000))
+  return(p)
+},simplify = FALSE)
+save(plot_list,file = "Imatinib_data/plots_Cmin_trajectory.RData")
+```
+
+```{r,echo=FALSE}
+#| label: fig-Cmin-trajectory
+#| fig-cap: Imatinib Cmin concentration from 0 to 240 hours, for dose 400, 600, 800, and 1000 mg. The trajectories of five patients are plotted.
+load("Imatinib_data/plots_Cmin_trajectory.RData")
+ggarrange(plotlist=plot_list,
+          ncol=2,
+          nrow=2)
+```
+
+We show a selected subset of the simulated exposure data under the four doses below in @tbl-example-exposure-data. Every patient has four simulated exposure values ($C_{min}$) under the four doses. The overall distribution of simulated $C_{min}$ are shown in @fig-boxplot-Cmin.
+
+```{r,echo=FALSE,eval=FALSE}
+N <- 8
+# see the impact of correlation between albumin and WBC
+rhos <- c(-1,-0.5,0,1)
+set.seed(86)
+plot_list <- sapply(rhos, function(rho)
+  {
+  data_exposure <- imatinib_exp(dose_levels = 1000,
+                              N= N,
+                              population = "specific",
+                              rho= rho,
+                              time = "all")
+  df <- data_exposure
+  p <-  ggplot(df,aes(x=time, y =Cmin,color=factor(ID)))+
+                geom_line()+
+                theme_bw()+
+                scale_color_nejm()+
+                labs(x="Time (hour)",
+                     y="Simulated Cmin (ug/L)",
+                     title = paste0("Correlation rho = ",rho))+
+                theme(
+                  legend.position = ""
+                )+
+    ylim(c(0,16000))
+  return(p)
+},simplify = FALSE)
+ggarrange(plotlist=plot_list,
+          ncol=2,
+          nrow=2)
+```
+
+```{r,eval=FALSE,echo=FALSE}
+# Read the PK model
+mod <- mread("imatinib_mrgsolve_mod_complex")
+# number of iteration
+nsim <- 1000
+# sample size (larger than needed so we can always chop to 
+# the needed size)
+N <- 800
+# dose levels to be investigated
+dose_levels <- c(400,600,800,1000)
+# exposure data for N patients for nsim iterations
+data_exposure_Imatinib <- replicate(nsim,
+                                    {
+                                      imatinib_exp(dose_levels = dose_levels,
+                                                   N=N)
+                                    },simplify = FALSE)
+save(data_exposure_Imatinib,file = "Imatinib_data/data_exposure_Imatinib.RData")
+```
+
+```{r,echo=FALSE,warning=FALSE}
+#| label: tbl-example-exposure-data
+#| tbl-cap: Example of simulated exposure data for two patients under doses 400, 600, 800, and 1000 mg.
+load("Imatinib_data/data_exposure_Imatinib.RData")
+head(data_exposure_Imatinib[[1]],8) |>
+  kable(digits = 1) |>
+  kable_styling("striped")
+```
+
+```{r,echo=FALSE,warning=FALSE}
+#| label: fig-boxplot-Cmin
+#| fig-cap: Distribution of simulated Imatinib Cmin, for dose 400, 600, 800, and 1000 mg
+df <- bind_rows(data_exposure_Imatinib[1:100])
+ggplot(df,aes(x=factor(dose),y=Cmin))+
+  geom_boxplot(outliers = FALSE)+
+  theme_bw()+
+  labs(y="Simulated Cmin (ug/L)",
+       x="Dose (mg)")+
+  geom_hline(yintercept = 1100, linetype = "dashed", color = "#49548A", size = 1) +  # Efficacy threshold
+  geom_hline(yintercept = 3180, linetype = "dashed", color = "#B14E53", size = 1)+  # Toxicity threshold
+  annotate("text",x=1,y=1100+250,label="Efficacy threshold = 1100"
+           ,color = "#49548A")+
+  annotate("text",x=1,y=3180+250,label="Toxicity threshold = 3180"
+           ,color = "#B14E53")
+```
+
+<br>
+
+**Step 2**, we map the simulated exposure to clinical outcomes (DLT, response, PFS) via the constructed exposure-toxicity, exposure-response, exposure-survival curves (@fig-exposure-profile).
+
+```{r,echo=FALSE,warning=FALSE}
+#| label: fig-exposure-profile
+#| fig-cap: Exposure-toxicity, exposure-repsonse and exposure-PFS profile of Imatinib
+tox_fun_shortterm <- function(Cmin)
+{
+  L <- 0.5
+  a <- -5.5
+  k <- 2
+  Cmax <- 4200
+  Z1 = a + k*((Cmin)/1000)
+  Z2 = a + k*(Cmax/1000)
+  DLT_rate <- L  / ((1 + exp(-Z1))*(1 - exp(-Z2)))
+  return(DLT_rate)
+}
+tox_fun_longterm <- function(Cmin)
+{
+   L <- 0.95
+   a <- -4.5
+ # # k <- 1.7202
+   k <- 1.86
+  Cmax <- 4200
+  Z1 = a + k*((Cmin)/1000)
+  Z2 = a + k*(Cmax/1000)
+  DLT_rate <- L  / ((1 + exp(-Z1))*(1 - exp(-Z2)))
+  return(DLT_rate)
+}
+eff_fun <- function(Cmin)
+{
+  Cmax <- 4200
+  k <- 1.045263
+  rsp_rate <- 0.7*(1-exp(-k*Cmin/1000))/(1-exp(-k*Cmax/1000))
+  return(rsp_rate)
+}
+medianPFS_fun <- function(Cmin)
+{
+ # a=0.3274917;b=-0.002728778
+  a=0.15;b=-0.004
+  Cmax <- 4200
+ # h_min <- 0.02
+  h_min <- 0.03
+  hazard <- (Cmin < Cmax)*(a*exp(b*Cmin) + h_min)+
+      (Cmin >= Cmax)*h_min
+  medianPFS <- log(2)/hazard
+  return(medianPFS)
+}
+p1 <- ggplot(data.frame(x=c(0,6000)),aes(x=x))+
+   geom_function(fun=tox_fun_shortterm,linetype=2,color="#49548A")+
+   geom_function(fun=tox_fun_longterm,linetype=3,color="#49548A")+
+   geom_function(fun=eff_fun,linetype=1,color="#B14E53")+
+  # geom_function(fun=tox_fun,aes(linetype="Toxicity"))+
+  # geom_function(fun=eff_fun,aes(linetype="Response"))+
+  # scale_linetype_manual(name="Type",values = c("Toxicity"=2,                                             "Response"=1))+
+  theme_bw()+
+  labs(x="Cmin (ug/L)",y="Probability")+
+  annotate("text",x=4500,y=0.45,label="Toxicity (short-term)",color="#49548A")+
+  annotate("text",x=3500,y=0.85,label="Toxicity (long-term)",color="#49548A")+
+  annotate("text",x=1700,y=0.45,label="Response",color="#B14E53")
+p2 <- ggplot(data.frame(x=c(0,6000)),aes(x=x))+
+  geom_function(fun=medianPFS_fun)+
+   theme_bw()+
+  labs(x="Cmin (ug/L)",y="Median PFS (month)")
+ggarrange(p1,p2,ncol=2)
+```
+
+## Comparison of simulated data vs. trial-reported data
+
+We compare the simulated outcome summaries with the outcome summaries reported from different trials.
+
+```{r,echo=FALSE}
+# collected outcome summaries from trial reports
+ph1_df <- data.frame(
+  dose = c(400,600,800,1000),
+  source = "Phase 1, Oosterom et. al",
+  type = "DLT rate",
+  value = c("0 (0-0.37)","0.25 (0.03-0.65)","0.06 (0-0.30)","0.75 (0.35-0.97)")
+)
+ph2_df <- data.frame(
+  dose = rep(c(400,600),3),
+  source = "Phase 2, Blanke et. al",
+  type = c(rep("DLT rate",2),rep("Response rate",2), rep("Median PFS",2)),
+  value = c("0.21 (0.12-0.32)","0.22 (0.13-0.33)","0.69 (0.57-0.79)","0.65 (0.56-0.78)","20 (16-29)","26 (16-41)")
+)
+ph3_df <-  data.frame(
+  dose = rep(c(400,800),3),
+  source = "Phase 3, Blanke et. al",
+  type = c(rep("DLT rate",2),rep("Response rate",2), rep("Median PFS",2)),
+  value = c("0.16 (0.12-0.20)","0.58 (0.52-0.63)","0.45 (0.39-0.50)","0.46 (0.41-0.51)","18 (16-21)","20 (17-25)")
+)
+reported_df <- rbind(ph1_df,ph2_df,ph3_df)
+```
+
+### Phase I-III data: dose - exposure - DLT rate - DLT (binary)
+
+#### Short-term DLT for Phase I
+
+We had very sparse data from the Phase I as it evaluated only 36 patients. One key difference between the DLT observed in Phase I trial and that observed in Phase II/III trials is time window. Phase I assessed short-term DLT that occurred during the first 8 weeks after randomization while later phases recorded DLT/dose reduction during the whole follow-up. From @tbl-shortterm-DLT we can conclude the simulated short-term DLT is not very extreme for all doses.
+
+```{r,eval=FALSE,echo=FALSE}
+# DLT data (shortterm)
+data_DLT_shortterm_Imatinib <- sapply(data_exposure_Imatinib, function(data)
+  {
+  exp_tox(data_exposure = data,type="short-term")
+},simplify = FALSE)
+#head(data_DLT_Imatinib[[1]])
+save(data_DLT_shortterm_Imatinib,file = "Imatinib_data/data_DLT_shortterm_Imatinib.RData")
+```
+
+```{r,echo=FALSE}
+#| label: tbl-shortterm-DLT
+#| tbl-cap: Comparison of simulated short-term DLT rates with reported short-term DLT rates from Phase I trial under doses 400, 600, 800, and 1000 mg.
+load("Imatinib_data/data_DLT_shortterm_Imatinib.RData")
+simulated_DLT_df <- data.frame(
+  dose = c(400,600,800,1000),
+  value = round(colMeans(bind_rows(data_DLT_shortterm_Imatinib)),3),
+  source = "Simulated",
+  type = "DLT rate"
+)
+DLT_df <- rbind(simulated_DLT_df,reported_df[reported_df$type=="DLT rate",])
+DLT_df_wide <- reshape2::dcast(DLT_df,dose + type ~source, value.var = "value")
+# rearrange
+DLT_df_wide <- DLT_df_wide[,c(1,2,6,3)]
+DLT_df_wide |>
+ # kable(digits = 2,format = "latex", booktabs = TRUE) |>
+  kable(digits = 3)|>
+  kable_styling(latex_options = c("hold_position"))
+```
+
+#### Long-term DLT for Phase II and III
+
+The simulated DLT rate for dose 400mg align reasonably with both Phase II and Phase III statistics. The simulated DLT rate for 600 mg is a bit above the $95\%$ confidence interval for the DLT rate reported in Phase II trial. Perhaps the simulated DLT rate is a bit low for dose 800 mg and 1000 mg. This dose was investigated in Phase 3 with 333 patients (out of which 192 had at least one dose reduction). So the estimated DLT rate of this dose (58%) should be quite precise (@tbl-longterm-DLT).
+
+```{r,eval=FALSE,echo=FALSE}
+# DLT data (longterm)
+data_DLT_longterm_Imatinib <- sapply(data_exposure_Imatinib, function(data)
+  {
+  exp_tox(data_exposure = data,type="long-term")
+},simplify = FALSE)
+#head(data_DLT_Imatinib[[1]])
+save(data_DLT_longterm_Imatinib,file = "Imatinib_data/data_DLT_longterm_Imatinib.RData")
+```
+
+
+```{r,echo=FALSE}
+#| label: tbl-longterm-DLT
+#| tbl-cap: Comparison of simulated long-term DLT rates with reported long-term DLT rates from Phase II & III trials under doses 400, 600, 800, and 1000 mg. NA means the dose was not investigated in the trial.
+load("Imatinib_data/data_DLT_longterm_Imatinib.RData")
+simulated_DLT_df <- data.frame(
+  dose = c(400,600,800,1000),
+  value = round(colMeans(bind_rows(data_DLT_longterm_Imatinib)),3),
+  source = "Simulated",
+  type = "DLT rate"
+)
+DLT_df <- rbind(simulated_DLT_df,reported_df[reported_df$type=="DLT rate",])
+DLT_df_wide <- reshape2::dcast(DLT_df,dose + type ~source, value.var = "value")
+# rearrange
+DLT_df_wide <- DLT_df_wide[,c(1,2,6,4,5)]
+DLT_df_wide |>
+ # kable(digits = 2,format = "latex", booktabs = TRUE) |>
+  kable(digits = 3)|>
+  kable_styling(latex_options = c("hold_position"))
+```
+
+### Phase 2 data: dose - exposure - response rate - response (binary)
+
+It is a bit difficult to say whether the simulated response rates align with the reported response rate, because the reported response rates from Phase 2 and 3 differ a lot (@tbl-response-data-comparison).
+
+```{r,eval=FALSE,echo=FALSE}
+data_rsp_Imatinib <- sapply(data_exposure_Imatinib, function(data)
+  {
+  exp_rsp(data_exposure = data)
+},simplify = FALSE)
+save(data_rsp_Imatinib,file = "Imatinib_data/data_rsp_Imatinib.RData")
+```
+
+```{r,echo=FALSE}
+#| label: tbl-response-data-comparison
+#| tbl-cap: Comparison of simulated response rates with reported response rates from different sources under doses 400, 600, 800, and 1000 mg. NA means the dose was not investigated in the trial.
+load("Imatinib_data/data_rsp_Imatinib.RData")
+simulated_rsp_df <- data.frame(
+  dose = c(400,600,800,1000),
+  value = round(colMeans(bind_rows(data_rsp_Imatinib)),3),
+  source = "Simulated",
+  type = "Response rate"
+)
+rsp_df <- rbind(simulated_rsp_df,reported_df[reported_df$type=="Response rate",])
+rsp_df_wide <- reshape2::dcast(rsp_df,dose + type ~source, value.var = "value")
+# rearrange
+rsp_df_wide <- rsp_df_wide[,c(1,2,5,3,4)]
+rsp_df_wide |>
+ # kable(digits = 2,format = "latex", booktabs = TRUE) |>
+  kable(digits=3)|>
+  kable_styling(latex_options = c("hold_position"))
+```
+
+### Phase 3 data: dose - exposure - hazard - PFS (time-to-event)
+
+I generate the survival data assuming the maximum follow-up time is 36 months (3 years), based on the statistical protocol of the Phase III trial.
+
+In trial reports, the PFS (and also OS) did not differ significantly whether 400 mg vs. 600 mg or 400 mg vs. 800 mg, indicating that the survival might be quite similar across the four doses, which is reflected in the simulated data (@tbl-PFS-data-comparison).
+
+```{r,eval=FALSE,echo=FALSE}
+# assume a HR of 1.4 of SoC and Imatinib dose 400mg
+# so the median survival is 13 mo vs. 18 mo
+data_surv_Imatinib <- sapply(data_exposure_Imatinib, function(data)
+  {
+  exp_surv(data_exposure = data,
+           h_min=0.03,
+           median_surv0 = 13,
+           p_trt = 0.5,
+           b=-0.004,
+           maxt = 36)
+},simplify = FALSE)
+save(data_surv_Imatinib,file = "Imatinib_data/data_surv_Imatinib.RData")
+```
+
+```{r,echo=FALSE}
+#| label: tbl-PFS-data-comparison
+#| tbl-cap: Comparison of simulated median PFS with reported median PFS from different sources under doses 400, 600, 800, and 1000 mg. NA means the dose was not investigated in the trial.
+load("Imatinib_data/data_surv_Imatinib.RData")
+medianPFS_sim <- sapply(1:4, function(dose)
+  {
+  medianPFS=median(unlist(sapply(data_surv_Imatinib, function(data)
+  {
+  data[[dose]]$eventtime[data[[dose]]$trt==1] |>
+    unclass() |>
+    as.vector()
+})))
+  return(medianPFS)
+})
+simulated_PFS_df <- data.frame(
+  dose = c(400,600,800,1000),
+  value = round(medianPFS_sim,1),
+  source = "Simulated",
+  type = "Median PFS"
+)
+PFS_df <- rbind(simulated_PFS_df,reported_df[reported_df$type=="Median PFS",])
+PFS_df_wide <- reshape2::dcast(PFS_df,dose + type ~source, value.var = "value")
+# rearrange
+PFS_df_wide <- PFS_df_wide[,c(1,2,5,3,4)]
+PFS_df_wide |>
+ # kable(digits = 2,format = "latex", booktabs = TRUE) |>
+   kable(digits=3)|>
+  kable_styling(latex_options = c("hold_position"))
+```
+
+```{r,eval=FALSE,echo=FALSE}
+## Re-structure simulated data to standard format
+nsim <- 1e3
+Imatinib_data <- vector(mode = "list",length = nsim)
+load("Imatinib_data/data_DLT_shortterm_Imatinib.RData")
+load("Imatinib_data/data_DLT_longterm_Imatinib.RData")
+load("Imatinib_data/data_rsp_Imatinib.RData")
+load("Imatinib_data/data_surv_Imatinib.RData")
+
+for(i in 1:nsim)
+{
+  profile_info <- list("drug_id" = i,dose = paste0(c(400,600,800,1000),"mg"))
+  data_ph1_DLT <- data_DLT_shortterm_Imatinib[[i]]
+  data_ph2_DLT <- data_DLT_longterm_Imatinib[[i]][1:200,]
+  data_ph3_DLT <- data_DLT_longterm_Imatinib[[i]][201:800,]
+  data_rsp <- data_rsp_Imatinib[[i]]
+  data_surv <- data_surv_Imatinib[[i]]
+  Imatinib_data[[i]] <- list(drug_family = "Imatinib",
+                             profile_info = profile_info,
+                             data_ph1_DLT = data_ph1_DLT,
+                             data_ph2_DLT = data_ph2_DLT,
+                             data_ph3_DLT = data_ph3_DLT,
+                             data_rsp = data_rsp,
+                             data_surv = data_surv)
+}
+save(Imatinib_data,file = "Imatinib_data/Imatinib_data.RData")
+```

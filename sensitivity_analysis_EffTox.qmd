@@ -121,10 +121,9 @@ load("results/res_EffTox/Contour_plots.RData")
 ggarrange(plotlist = contour_plots,nrow=3,ncol=3)
 
 ggarrange(plotlist = contour_plots[2:9],nrow=2,ncol=4,
-          labels = 1:8)
+          labels = c("FL1","FL2","SL1","SL2","FC1","FC2","SC1","SC2"),
+          font.label = list(size=9),hjust = 0.05)
 ```
-
-
 
 ```{r,eval=FALSE,echo=FALSE}
 # run the simulation
@@ -166,7 +165,15 @@ save(res_ph1_EffTox,file = paste0("results/res_EffTox/res_ph1_",
 ## Visualize results
 
 ```{r,echo=FALSE,warning=FALSE}
-drug_family <- drug_families[2]
+drug_families <- c(
+                     "immuno_fixed_OBD3_MTD5",
+                     "immuno_fixed_OBD4_MTD5",
+                     "chemo_fixed_MTD5",
+                     "chemo_fixed_MTD5_steepTRR")
+plot_list <- vector(mode = "list",length = length(drug_families))
+for(i in 1:length(drug_families))
+{
+drug_family <- drug_families[i]
 RP2D_summary_OBD <- purrr::map_dfr(1:nrow(sce_df),function(sce)
 {
   load(paste0("results/res_EffTox/res_ph1_",
@@ -178,27 +185,30 @@ RP2D_summary_OBD <- purrr::map_dfr(1:nrow(sce_df),function(sce)
   res <- combine_res(res_ph1 = res_ph1_obj)
   res <- res$`Table of RP2D` |>
     select(dose_level,prob_selected) |>
-    mutate(Scenario = sce) 
+    mutate(Scenario = factor(sce,levels=1:8,
+                             labels = c("FL1","FL2","SL1","SL2",
+                                        "FC1","FC2","SC1","SC2"))) 
     # mutate(Design = factor(Design,levels=c("threep3","BOIN","CRM","EffTox"),
     #                        labels = c("Threep3","BOIN","CRM","EffTox"))) |>
   return(res)
 })
 
 drug_family_label <- case_when(
-      drug_family == "immuno_fixed_OBD3_MTD5" ~ "immuno-like profile OBD=3",
-      drug_family == "immuno_fixed_OBD4_MTD5" ~ "immuno-like profile OBD=4",
-      drug_family == "chemo_fixed_MTD5" ~ "chemo-like profile MTD=5"
-)
+    drug_family == "chemo_fixed_MTD5" ~ "Chemo-like profile, flat efficacy",
+    drug_family == "chemo_fixed_MTD5_steepTRR" ~ "Chemo-like profile, steep efficacy",
+    drug_family == "immuno_fixed_OBD3_MTD5" ~ "Immuno-like profile, early plateau",
+    drug_family == "immuno_fixed_OBD4_MTD5" ~ "Immuno-like profile, late plateau"
+  )
 
 
-RP2D_summary_OBD |>
-  ggplot(aes(x = factor(Scenario), y = prob_selected, group = factor(dose_level),
+plot <- RP2D_summary_OBD |>
+  ggplot(aes(x = Scenario, y = prob_selected, group = factor(dose_level),
              color=factor(dose_level))) +
   geom_line(lwd=0.7)+
   geom_point()+
   theme_bw() +
   labs(
-    x = "Contour setting",
+    x = "Contour shape",
     y = "Probability of Selection",
     color = "RP2D",
     title = drug_family_label
@@ -206,24 +216,28 @@ RP2D_summary_OBD |>
   geom_text(aes(label = round(prob_selected, 2)),  # text labels
             position = position_dodge(width = 0.8), 
             vjust = -0.3,                          # vertical position (above bar)
-            size = 3,
+            size = 2,
             angle = 45,
             show.legend = FALSE)+
   scale_color_viridis_d(option = "viridis",na.value="grey80")+
   theme(
     title = element_text(size=9)
   )+
-  ylim(0,0.7)
-
+  ylim(0,0.8)
+plot_list[[i]] <- plot
+}
+ggarrange(plotlist = plot_list,ncol=2,nrow=2,common.legend = TRUE,
+          legend = "right")
 ```
-
 
 ## Combine Phase I-III results
 
 ```{r,echo=FALSE}
-#drug_family <- "chemo_fixed_MTD5"
-# drug_family <- "immuno_fixed_OBD4_MTD5"
-# drug_family <- "immuno_fixed_OBD3_MTD5"
+drug_families <- c(
+                     "immuno_fixed_OBD3_MTD5",
+                     "immuno_fixed_OBD4_MTD5",
+                     "chemo_fixed_MTD5",
+                     "chemo_fixed_MTD5_steepTRR")
 p_list <- sapply(drug_families, function(drug_family)
 {
 TS_rules <- list(NULL,0.45,0.40,0.35,0.30)
@@ -245,8 +259,9 @@ res_ph123_df <- purrr::map_dfr(TS_rules,function(TS)
       Ph123_PoS = res$`Phase I-III probability of significance`,
       Ph23_PoTS = res$`Phase II&III probability of toxicity suspension`
     ) |>
-      mutate(Scenario = sce) |>
-      mutate(Scenario = factor(Scenario,levels = c("Main",1:8)))
+       mutate(Scenario = factor(sce,levels=c("Main",1:8),
+                             labels = c("Main","FL1","FL2","SL1","SL2",
+                                        "FC1","FC2","SC1","SC2"))) 
     return(out)
   })
   out <- out |>
@@ -261,10 +276,11 @@ res_ph123_df <- res_ph123_df |>
   ))
 
 drug_family_label <- case_when(
-      drug_family == "immuno_fixed_OBD3_MTD5" ~ "immuno-like profile OBD=3",
-      drug_family == "immuno_fixed_OBD4_MTD5" ~ "immuno-like profile OBD=4",
-      drug_family == "chemo_fixed_MTD5" ~ "chemo-like profile MTD=5"
-    )
+    drug_family == "chemo_fixed_MTD5" ~ "Chemo-like profile, flat efficacy",
+    drug_family == "chemo_fixed_MTD5_steepTRR" ~ "Chemo-like profile, steep efficacy",
+    drug_family == "immuno_fixed_OBD3_MTD5" ~ "Immuno-like profile, early plateau",
+    drug_family == "immuno_fixed_OBD4_MTD5" ~ "Immuno-like profile, late plateau"
+  )
 p <- res_ph123_df |>
   mutate(TS_rule_f = factor(TS_rule,
                             levels=c("None","45% DLT","40% DLT","35% DLT","30% DLT"))) |>
@@ -274,20 +290,22 @@ p <- res_ph123_df |>
   geom_line()+
   theme_bw()+
   labs(x="Toxicity suspension threshold",
-       y="Phase I-III Probability of Significance (PoS)",
+       y="Probability of Success (PoS)",
        title = drug_family_label,
-       color = "Contour setting")+
+       color = "Contour shape")+
   # scale_color_viridis_d()+
   scale_color_manual(values = c( "red","#440154FF", "#46337EFF", "#365C8DFF",
                                 "#277F8EFF", "#1FA187FF", "#4AC16DFF" ,"#9FDA3AFF", "#FDE725FF"))+
-  theme(
-    legend.position = "right"
-  )
+ theme(
+    legend.position = "right",
+    title = element_text(size=9),
+    axis.title.y = element_text(size=9)
+  )+
+  ylim(0,0.8)
   return(p)
 },simplify = FALSE)
 # immuno-like
-ggarrange(plotlist = p_list[1:2],ncol = 2,
-          common.legend = TRUE)
-# chemo-like
-p_list[[3]]
+p <- ggarrange(plotlist = p_list,ncol = 2,nrow=2,
+          common.legend = TRUE,legend = "right")
+annotate_figure(p,"EffTox")
 ```

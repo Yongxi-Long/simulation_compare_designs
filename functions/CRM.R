@@ -1,8 +1,9 @@
+require(trialr)
 run_CRM <- function(data,
                     N,
                     cohort_size = 1,
                     target_DLT,
-                    tox_bound = 0.75,
+                    tox_bound = 0.9,
                     skeleton=NULL,
                     model="empiric",
                     a0 = NULL,
@@ -12,7 +13,8 @@ run_CRM <- function(data,
                     seed = 123,
                     chains = 1,
                     iter = 1000,
-                    warmup = 250)
+                    warmup = 250,
+                    drug_detail = TRUE)
 {
   # Extract dose levels
   doses <- data$profile_info$dose
@@ -80,10 +82,10 @@ run_CRM <- function(data,
     # P(p_T(d) > target_DLT|data), i.e., Pr(toxicity prob at dose d exceeds target DLT)
     # get a sample from the posterior
     prob_exceeds_target_DLT <- fit_CRM |>
-      gather_draws(prob_tox[dose]) |>
-      group_by(dose) |>
-      summarise(prob_exceeds_target_DLT = mean(.value > target_DLT)) |>
-      select(prob_exceeds_target_DLT) |>
+      tidybayes::gather_draws(prob_tox[dose]) |>
+      dplyr::group_by(dose) |>
+      dplyr::summarise(prob_exceeds_target_DLT = mean(.value > target_DLT)) |>
+      dplyr::select(prob_exceeds_target_DLT) |>
       unlist()
     # see if the recommended dose has Pr(toxicity prob at dose d exceeds target DLT) <= tox_bound
     admissible_doses <- which(prob_exceeds_target_DLT <= tox_bound) |> as.numeric()
@@ -126,7 +128,7 @@ run_CRM <- function(data,
   }
   out$RP2D <- RP2D
   # profile info for RP2D
-  if(is.na(RP2D))
+  if(is.na(RP2D) | drug_detail == FALSE)
   {
     out$RP2D_info <- NA
   } else
@@ -136,7 +138,7 @@ run_CRM <- function(data,
                           "rsp_rate" = data$profile_info$rsp_rate[RP2D],
                           "median_OS" = data$profile_info$median_OS[RP2D])
   }
-  # table of dose levels, actual dose values and patient assigment
+  # table of dose levels, actual dose values and patient assignment
   summary_tab <- table(factor(fit_CRM$dat$doses,levels = 1:ndoses)) |>
     as.data.frame()
   colnames(summary_tab) <- c("dose_level","num_pts")

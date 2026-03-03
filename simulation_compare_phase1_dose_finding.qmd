@@ -33,11 +33,12 @@ suppressPackageStartupMessages({
 source("functions/combine_res.R")
 ```
 
-## Load data
+# Load data
 
 ```{r,eval=FALSE}
-# drug_family <- "chemo_fixed_MTD5"
-drug_family <- "immuno_fixed_OBD3_MTD5"
+#drug_family <- "chemo_fixed_MTD5"
+drug_family <- "chemo_fixed_MTD5_steepTRR"
+#drug_family <- "immuno_fixed_OBD3_MTD5"
 # drug_family <- "immuno_fixed_OBD4_MTD5"
 load(paste0("data/simulated_data/",drug_family,".RData"))
 drug_data[[1]]$profile_info$DLT_rate
@@ -67,6 +68,8 @@ res_ph1_threep3[[i]] <- res
 }
 save(res_ph1_threep3,
      file = paste0("results/res_ph1_fixed_threep3.RData"))
+combine_res(res_ph1 = res_ph1_threep3)
+mean(sapply(res_ph1_threep3, function(res) sum(res$summary_tab$num_pts)))
 ```
 
 ### BOIN design
@@ -182,12 +185,15 @@ for(i in 1:length(drug_data))
   print(i)
 }
 save(res_ph1_EffTox,file = paste0("results/res_ph1_",drug_family,"_EffTox.RData"))
+combine_res(res_ph1 = res_ph1_EffTox)
 ```
 
 ### BOIN12 design
 
 ```{r,eval=FALSE}
 source("functions/BOIN12.R")
+# sample size
+N <- 30
 # the toxicity upper limit
 phi_t <- 0.35
 # the efficacy lower limit
@@ -218,7 +224,7 @@ for(i in 1:length(drug_data))
                n_star1 = n_star1, n_star2 = n_star2)
   })
   res_ph1_BOIN12[[i]] <- res
- # print(i)
+# print(i)
 }
 save(res_ph1_BOIN12,file = paste0("results/res_ph1_",drug_family,"_BOIN12.RData"))
 combine_res(res_ph1 = res_ph1_BOIN12)
@@ -230,7 +236,8 @@ combine_res(res_ph1 = res_ph1_BOIN12)
 designs <- c("threep3", "BOIN", "CRM")
 drug_families <- c("immuno_fixed_OBD3_MTD5",
                   "immuno_fixed_OBD4_MTD5",
-                  "chemo_fixed_MTD5")
+                  "chemo_fixed_MTD5",
+                  "chemo_fixed_MTD5_steepTRR")
 RP2D_summary_MTD <- purrr::map_dfr(designs, function(design) {
   # Load the results
   load(paste0("results/res_ph1_fixed_", design, ".RData"))
@@ -260,9 +267,10 @@ RP2D_summary_OBD <- purrr::map_dfr(designs,function(design)
     mutate(Design = factor(Design,levels=c("threep3","BOIN","CRM","EffTox","BOIN12"),
                            labels = c("Threep3","BOIN","CRM","EffTox","BOIN12"))) |>
     mutate(Drug_family = case_when(
-      drug_family == "immuno_fixed_OBD3_MTD5" ~ "immuno OBD=3",
-      drug_family == "immuno_fixed_OBD4_MTD5" ~ "immuno OBD=4",
-      drug_family == "chemo_fixed_MTD5" ~ "chemo MTD=5"
+      drug_family == "immuno_fixed_OBD3_MTD5" ~ "immuno early plateau",
+      drug_family == "immuno_fixed_OBD4_MTD5" ~ "immuno late plateau",
+      drug_family == "chemo_fixed_MTD5" ~ "chemo flat efficacy",
+      drug_family == "chemo_fixed_MTD5_steepTRR" ~ "chemo steep efficacy"
     ))
   return(res)
 })
@@ -276,7 +284,7 @@ p1 <- RP2D_summary_MTD |>
     x = "Design",
     y = "Probability of Selection",
     fill = "RP2D",
-    title = "Unvariate Designs"
+    title = "Univariate Designs"
   )+
   geom_text(aes(label = round(prob_selected, 2)),  # text labels
             position = position_dodge(width = 0.8), 
@@ -310,7 +318,7 @@ p2 <- RP2D_summary_OBD |>
   scale_fill_viridis_d(option = "viridis",na.value="grey80")+
   theme(
     title = element_text(size=8),
-    axis.text.x = element_text(size=7),
+    axis.text.x = element_text(size=8,angle = 10),
     axis.title = element_text(size=8)
   )+
   ylim(0,0.7)
@@ -334,13 +342,15 @@ p3 <- RP2D_summary_OBD |>
   scale_fill_viridis_d(option = "viridis",na.value="grey80")+
   theme(
     title = element_text(size=8),
-    axis.text.x = element_text(size=7),
+     axis.text.x = element_text(size=8,angle = 10),
     axis.title = element_text(size=8)
   )+
   ylim(0,0.7)
-
+p1
 plot <- ggarrange(p1,p2,p3,nrow=2,ncol=2,common.legend = TRUE,
           legend = "right")
+ggarrange(p3,p2,ncol=2,common.legend = TRUE,
+          legend = "top")
 plot
 # ggsave(filename = paste0("C:\\Users\\ylong\\OneDrive - LUMC\\Projects\\Impacts_early_phase_trial_methods\\plots\\Phase1_dose_selection.png"),
 #        plot = plot,
@@ -360,7 +370,7 @@ We first supply clinical information to get design parameters for the Simon's tw
 source("functions/simon2stage.R")
 design_para <- simon2stage_design(p0=0.4,
                                   p1=0.5)
-drug_family <- "chemo_fixed_MTD5"
+drug_family <- "chemo_fixed_MTD5_steepTRR"
 load(paste0("data/simulated_data/",drug_family,".RData"))
 ```
 
@@ -475,7 +485,7 @@ We use the RCT_design function to help us do a sample size calculation
 source("functions/RCT.R")
 design_para <- RCT_design(hazard0 = log(2)/14,hazard1 = log(2)/19,
                           t_FU = 60, t_accrual = 12)
-drug_family <- "chemo_fixed_MTD5"
+drug_family <- "chemo_fixed_MTD5_steepTRR"
 load(paste0("data/simulated_data/",drug_family,".RData"))
 ```
 
@@ -502,10 +512,21 @@ save(res_ph3_RCT,file = paste0("results/res_ph3_",
 ### Combine Phase I-III results
 
 ```{r}
-for(drug_family in c("chemo_fixed_MTD5",
+drug_families <- c(
                      "immuno_fixed_OBD3_MTD5",
-                     "immuno_fixed_OBD4_MTD5"))
+                     "immuno_fixed_OBD4_MTD5",
+                     "chemo_fixed_MTD5",
+                     "chemo_fixed_MTD5_steepTRR")
+plot_list <- vector(mode = "list",length = length(drug_families))
+for(i in 1:length(drug_families))
 {
+  drug_family <- drug_families[i]
+  drug_family_label <- case_when(
+    drug_family == "chemo_fixed_MTD5" ~ "Chemo-like profile, flat efficacy",
+    drug_family == "chemo_fixed_MTD5_steepTRR" ~ "Chemo-like profile, steep efficacy",
+    drug_family == "immuno_fixed_OBD3_MTD5" ~ "Immuno-like profile, early plateau",
+    drug_family == "immuno_fixed_OBD4_MTD5" ~ "Immuno-like profile, late plateau"
+  )
 TS_rules <- list(NULL,0.45,0.40,0.35,0.30)
 designs_univar <- c("threep3", "BOIN", "CRM")
 designs_bivar <- c("EffTox","BOIN12")
@@ -554,10 +575,14 @@ p1 <- res_ph123_df |>
   geom_line()+
   theme_bw()+
   labs(x="Toxicity suspension threshold",
-       y="Phase I-III Probability of Significance (PoS)",
-     #  title = "Phase I-II results",
+       y="Phase I-III Probability of Success (PoS)",
+      title = drug_family_label,
        color = "Dose-finding method")+
-  scale_color_nejm()
+  scale_color_nejm()+
+  theme(
+     title = element_text(size = 12)
+  )+
+  ylim(0,0.7)
 
 p2 <- res_ph123_df |>
   mutate(TS_rule_f = factor(TS_rule,
@@ -569,22 +594,20 @@ p2 <- res_ph123_df |>
   theme_bw()+
   labs(x="Toxicity suspension threshold",
        y="Phase II&III Probability of Toxicity Suspension (PoTS)",
-    #   title = "Phase I-II results",
+       title = "   ",
        color = "Dose-finding method")+
   scale_color_nejm()+
   theme(
-    axis.title = element_text(size=10)
-  )
+    axis.title.y = element_text(size=10),
+    title = element_text(size = 12)
+  )+
+  ylim(0,0.7)
 
-p12 <- ggarrange(p1,p2,ncol = 2,legend = "top",
-          common.legend = TRUE)
-
-plot <- annotate_figure(
-  p = p12,
-  top = text_grob(paste0("Drug profile: ",drug_family))    
-)
+p12 <- ggarrange(p1,p2,ncol = 2,legend = "none")
+p12
+#plot_list[[i]] <- p12
 ggsave(filename = paste0("C:\\Users\\ylong\\OneDrive - LUMC\\Projects\\Impacts_early_phase_trial_methods\\plots\\PoS_",drug_family,".png"),
-       plot = plot,
+       plot = p12,
        dpi=320,
        width = 7,
        height = 5,

@@ -7,7 +7,6 @@ format:
 editor: visual
 ---
 
-
 ## Aim
 
 This is to generate drug profiles of different family:
@@ -77,11 +76,12 @@ scale_surv <- 20
 offset_surv <- 8
 
 # see the drug profile
-plot_drug_profiles(dose_levels = dose_levels,
+plot_immuno_OBD3 <- plot_drug_profiles(dose_levels = dose_levels,
                    k_tox=k_tox,L_tox=L_tox,
                    a_rsp=a_rsp,b_rsp=b_rsp,L_rsp=L_rsp,
                    a_surv=a_surv,b_surv=b_surv,L_surv=L_surv,
-                   scale_surv=scale_surv,offset_surv=offset_surv)
+                   scale_surv=scale_surv,offset_surv=offset_surv,
+                   plot_title = "Immuno-like profile, early plateau")
 ```
 
 ```{r,echo=FALSE,eval=FALSE}
@@ -177,11 +177,12 @@ scale_surv <- 20
 offset_surv <- 8
 
 # see the drug profile
-plot_drug_profiles(dose_levels = dose_levels,
+plot_immuno_OBD4 <- plot_drug_profiles(dose_levels = dose_levels,
                    k_tox=k_tox,L_tox=L_tox,
                    a_rsp=a_rsp,b_rsp=b_rsp,L_rsp=L_rsp,
                    a_surv=a_surv,b_surv=b_surv,L_surv=L_surv,
-                   scale_surv=scale_surv,offset_surv=offset_surv)
+                   scale_surv=scale_surv,offset_surv=offset_surv,
+                   plot_title = "Immuno-like profile, late plateau")
 ```
 
 ```{r,echo=FALSE,eval=FALSE}
@@ -272,30 +273,51 @@ k_tox = -3
 L_tox = 0.8
 L_rsp=0.58
 L_surv = 0.68
-# a_rsp <- 10
-# b_rsp <- 6
-# a_surv <- 5
-# b_surv <- 3
 k_rsp <- 2
 k_surv <- 2
 scale_surv <- 20
 offset_surv <- 8
 
 # see the drug profile
-plot_drug_profiles(type="chemo",
+plot_chemo_MTD5 <- plot_drug_profiles(type="chemo",
                    dose_levels =dose_levels,
                    k_tox=k_tox,L_tox=L_tox,
                    k_rsp = k_rsp,L_rsp =L_rsp,
                    k_surv=k_surv,L_surv=L_surv,
                    scale_surv=scale_surv,
-                   offset_surv=offset_surv)
-```
+                   offset_surv=offset_surv,
+                   plot_title = "Chemo-like Profile, flat efficacy")
+plot_chemo_MTD5
 
+# see the drug profile
+k_rsp <- -1
+L_rsp = 0.85
+k_surv <- -1
+L_surv = 1
+plot_chemo_MTD5_steepTRR <- plot_drug_profiles(type="chemo",
+                   dose_levels =dose_levels,
+                   k_tox=k_tox,L_tox=L_tox,
+                   k_rsp = k_rsp,L_rsp =L_rsp,
+                   k_surv=k_surv,L_surv=L_surv,
+                   scale_surv=scale_surv,
+                   offset_surv=offset_surv,
+                   plot_title = "Chemo-like Profile, steep efficacy")
+plot_chemo_MTD5
+plot <- ggarrange(plotlist = list(plot_immuno_OBD3,plot_immuno_OBD4,
+                           plot_chemo_MTD5,plot_chemo_MTD5_steepTRR),ncol=2,nrow=2)
+plot
+# ggsave(filename = paste0("C:\\Users\\ylong\\OneDrive - LUMC\\Projects\\Impacts_early_phase_trial_methods\\plots\\drug_profiles_fixed2.png"),
+#        plot = plot,
+#        dpi=320,
+#        width = 7,
+#        height = 5,
+#        units = "in")
+```
 
 ```{r,echo=FALSE,eval=FALSE}
 # generate individual trial data under this drug profile
-drug_family <- "chemo_fixed_MTD5"
-set.seed(1006)
+drug_family <- "chemo_fixed_MTD5_steepTRR"
+set.seed(20260202)
 ndose <- 6
 ndrugs <- 1000
 # store simulated data

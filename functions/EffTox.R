@@ -13,7 +13,8 @@ run_EffTox <- function(data,
                        seed = 123,
                        chains = 1,
                        iter = 1000,
-                       warmup = 250) {
+                       warmup = 250,
+                       drug_detail = TRUE) {
   
   # Extract dose levels
   doses <- data$profile_info$dose
@@ -109,7 +110,7 @@ run_EffTox <- function(data,
   RP2D <- fit_EffTox$recommended_dose
   out$RP2D <- RP2D
   # profile info for RP2D
-  if(is.na(RP2D))
+  if(is.na(RP2D) | drug_detail == FALSE)
   {
     out$RP2D_info <- NA
   } else

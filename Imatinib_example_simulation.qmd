@@ -1,0 +1,119 @@
+---
+title: "Re-development of clinical trials of Imatinib"
+author: "Yongxi Long"
+format: 
+  html:
+    self-contained: true
+toc: true
+editor: visual
+---
+
+## Aim
+
+Evaluate the performance of different dose-finding methods on Imatinib profile constructed from trial reports. The Phase II and Phase III design used in the simulation study are different from the actual trial designs of Imatinib, to accommodate the fact that only one dose will be carried forward in the simulation study.
+
+```{r}
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(ggplot2)
+  library(ggsci)
+  library(RColorBrewer)
+  library(trialr)
+  library(clinfun)
+  library(ggExtra)
+  library(ggridges)
+  library(ggpubr)
+})
+source("functions/combine_res.R")
+# load data
+load("Imatinib_example/Imatinib_data/Imatinib_data.RData")
+```
+
+## Phase I
+
+The sample size is 40 for the actual Phase I study
+
+```{r}
+N_ph1 <- 40
+nsim <- 1e3
+# target DLT for model-assisted and model-based design
+target_DLT <- 0.3
+```
+
+### 3+3 design
+
+```{r,eval=FALSE}
+source("functions/threep3.R")
+res_ph1_threep3 <- sapply(Imatinib_data, function(data)
+  {
+  run_threep3(data = data,
+              N=N_ph1,
+              drug_detail = FALSE)
+},simplify = FALSE)
+combine_res(res_ph1 = res_ph1_threep3)
+save(res_ph1_threep3,
+     file = paste0("Imatinib_example/Imatinib_simres/res_ph1_threep3.RData"))
+```
+
+### BOIN design
+
+```{r}
+source("functions/BOIN.R")
+# cohort size
+cohort_size= 3
+# toxicity bound for inadmissible doses
+tox_bound <- 0.95
+# BOIN design
+res_ph1_BOIN <- sapply(Imatinib_data, function(data)
+  {
+  run_BOIN(data = data,
+                 N=N_ph1,
+                 cohort_size = cohort_size,
+                 target_DLT=target_DLT,
+                 tox_bound = tox_bound,
+                drug_detail = FALSE)
+},simplify = FALSE)
+# the for loop is for debugging
+# res_ph1_BOIN <- vector(mode = "list",length = nsim)
+# for(i in 1:nsim)
+# {
+# res <- run_BOIN(data = Imatinib_data[[i]],
+#                  N=N_ph1,
+#                  cohort_size = cohort_size,
+#                  target_DLT=target_DLT,
+#                  tox_bound = tox_bound,
+#                 drug_detail = FALSE)
+# res_ph1_BOIN[[i]] <- res
+# }
+combine_res(res_ph1 = res_ph1_BOIN)
+save(res_ph1_BOIN,
+     file = paste0("Imatinib_example/Imatinib_simres/res_ph1_BOIN.RData"))
+
+```
+
+### CRM Design
+
+```{r}
+source("functions/CRM.R")
+# cohort size
+cohort_size= 1
+# toxicity boundary
+tox_bound <- 0.9
+# from paper Chu et. al
+# Unifying CRM and EWOC designs for Phase I cancer clinical trials
+res_ph1_CRM <- vector(mode = "list",length = nsim)
+for(i in 1:nsim)
+{
+  res <- run_CRM(data=Imatinib_data[[i]],
+                    N=N_ph1,
+                    cohort_size = cohort_size,
+                    target_DLT=target_DLT,
+                    tox_bound = tox_bound,
+                    model="empiric",
+                 drug_detail = FALSE)
+  res_ph1_CRM[[i]] <- res
+  print(i)
+}
+save(res_ph1_CRM,file = paste0("Imatinib_example/Imatinib_simres/res_ph1_CRM.RData"))
+combine_res(res_ph1 = res_ph1_CRM)
+```
