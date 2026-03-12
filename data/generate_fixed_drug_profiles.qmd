@@ -49,6 +49,35 @@ a and b are shape control parameters:
 
 -   For dose-survival, we first obtain some value between 0 and 1 from the above function, then scale them by some constant to have proper units (e.g., days, months, years). We also add an offset to make sure that the survival time at dose zero is a positive value (otherwise it will be zero).
 
+## Parameter setup for four drug profiles
+
+```{r,echo=TRUE}
+# dose selection
+ndose <- 6
+lowest_dose <- 0.1
+dose_levels <- lowest_dose*c(1,2,2*1.65,2*1.65*1.52,2*1.65*1.52*1.4,2*1.65*1.52*1.4*1.33)
+profile_parameter_list <- list(
+  "immuno_early_plateau" = list(k_tox = -3.5,L_tox = 0.8,
+                                L_rsp=0.5, L_surv = 0.6,
+                                a_rsp = 1, b_rsp = 12,
+                                a_surv = 0.1, b_surv = 12,
+                                scale_surv = 20, offset_surv = 8),
+  "immuno_late_plateau" =  list(k_tox = -3.5,L_tox = 0.8,
+                                L_rsp=0.5, L_surv = 0.6,
+                                a_rsp = 2, b_rsp = 8,
+                                a_surv = 2, b_surv = 8,
+                                scale_surv = 20, offset_surv = 8),
+  "chemo_flat_efficacy" = list(k_tox = -3.5, L_tox = 0.8,
+                               L_rsp = 0.58, L_surv = 0.68,
+                               k_rsp = 2, k_surv = 2,
+                               scale_surv = 20, offset_surv = 8),
+  "chemo_steep_efficacy" = list(k_tox = -3.5, L_tox = 0.8,
+                               L_rsp = 0.85, L_surv = 1,
+                               k_rsp = -1, k_surv = -1,
+                               scale_surv = 20, offset_surv = 8)
+)
+```
+
 ## Immuno-like drug profiles
 
 In this type of drug profiles (immuno/targeted therapies), the efficacy curves plateau before MTD. Namely, the optimal biological dose (OBD) is smaller than the maximum tolerable dose (@fig-dose-tox-rsp-surv). We set $a<b$ for dose-response, dose-survival curves to achieve this. For dose-(median) survival curve, we add scale and offset parameter in the function to make the survival time in proper range and has a minimum positive value.
@@ -57,269 +86,103 @@ How earlier the efficacy plateau is relative to the MTD is a tuning parameter. W
 
 ```{r,echo=FALSE}
 #| label: fig-immuno-OBD3-MTD5
-#| fig-cap: "Dose-DLT, dose-response, and dose-median OS for a immunotherapy-like profile, the OBD is dose 3, which is very separated from MTD which is dose 5."
-# get dose levels
-# dose selection
-ndose <- 6
-lowest_dose <- 0.1
-dose_levels <- lowest_dose*c(1,2,2*1.65,2*1.65*1.52,2*1.65*1.52*1.4,2*1.65*1.52*1.4*1.33)
-# parameters for the curves
-k_tox = -3
-L_tox = 0.8
-L_rsp=0.5
-L_surv = 0.6
-a_rsp <- 1
-b_rsp <- 12
-a_surv <- 0.1
-b_surv <- 12
-scale_surv <- 20
-offset_surv <- 8
-
+#| fig-cap: "Dose-DLT, dose-response, and dose-median OS for a immunotherapy-like profile wtih an early-plateau of efficacy, the OBD is dose 3, which is very separated from MTD which is dose 5."
 # see the drug profile
+drug_family <- "immuno_early_plateau"
+profile_parameter <- profile_parameter_list[[drug_family]]
 plot_immuno_OBD3 <- plot_drug_profiles(dose_levels = dose_levels,
-                   k_tox=k_tox,L_tox=L_tox,
-                   a_rsp=a_rsp,b_rsp=b_rsp,L_rsp=L_rsp,
-                   a_surv=a_surv,b_surv=b_surv,L_surv=L_surv,
-                   scale_surv=scale_surv,offset_surv=offset_surv,
+                   k_tox=profile_parameter$k_tox,L_tox=profile_parameter$L_tox,
+                   a_rsp=profile_parameter$a_rsp,b_rsp=profile_parameter$b_rsp,
+                   L_rsp=profile_parameter$L_rsp,
+                   a_surv=profile_parameter$a_surv,b_surv=profile_parameter$b_surv,
+                   L_surv=profile_parameter$L_surv,
+                   scale_surv=profile_parameter$scale_surv,
+                   offset_surv=profile_parameter$offset_surv,
                    plot_title = "Immuno-like profile, early plateau")
-```
-
-```{r,echo=FALSE,eval=FALSE}
-# generate individual trial data under this drug profile
-drug_family <- "immuno_fixed_OBD3_MTD5"
-set.seed(1006)
-ndose <- 6
-ndrugs <- 1000
-# store simulated data
-drug_data <- vector(mode = "list",
-                    length = ndrugs)
-N_ph1 <- 30
-N_ph2 <- 300
-N_ph3 <- 500
-DLT_rates <- scaled_logistic_curve(dose_levels,
-                                     k=k,
-                                     L=L_tox)
-rsp_rates <- sigmoid_curve(dose_levels, a= a_rsp,b=b_rsp,L=L_rsp,
-  )
-median_OS <- sigmoid_curve(dose_levels,
-                             a = a_surv, b = b_surv, L = L_surv,
-                             scale = scale_surv,
-                             offset = offset_surv)
-parameter <- c("k"=k,"L_tox"=L_tox,
-               "a_rsp"=a_rsp,"b_rsp"=b_rsp,"L_rsp"=L_rsp,
-               "a_surv" = a_surv,"b_surv" = b_surv,"L_surv"=L_surv)
-# simulate 1000 trial data from this one fixed profile
-for(i in 1:ndrugs)
-{
-  data_ph1_DLT <- gen_DLT(nsim=1,
-                          DLT_rates = DLT_rates,
-                          N = N_ph1)[[1]]
-  data_ph2_DLT <- gen_DLT(nsim=1,
-                          DLT_rates = DLT_rates,
-                          N = N_ph2)[[1]]
-  data_ph3_DLT <- gen_DLT(nsim=1,
-                          DLT_rates = DLT_rates,
-                          N = N_ph3)[[1]]
-  
-  # Response data and survival data
-  data_rsp <- gen_rsp(nsim=1,
-                      rsp_rates = rsp_rates,
-                      N = N_ph2)[[1]]
-  
-  data_surv <- gen_surv(
-    nsim = 1,
-    N = N_ph3,
-    median_surv0 = 14,
-    median_surv1 = median_OS,
-    p_trt = 0.5,
-    maxt = 60
-  )[[1]]
-  profile_info <- list(
-    drug_id = i,
-    dose = dose_levels,
-    DLT_rate = DLT_rates,
-    rsp_rate = rsp_rates,
-    median_OS = median_OS,
-    parameter = parameter
-  )
-  drug_data[[i]] <- list("drug_family"=drug_family,
-                         "profile_info"=profile_info,
-                         "data_ph1_DLT" = data_ph1_DLT,
-                         "data_ph2_DLT" = data_ph2_DLT,
-                         "data_ph3_DLT" = data_ph3_DLT,
-                         "data_rsp" = data_rsp,
-                         "data_surv" = data_surv)
-if (i%%100 == 0) print(i)
-}
-save(drug_data,
-     file = paste0("simulated_data/",drug_family,".RData"))
+plot_immuno_OBD3
 ```
 
 ```{r,echo=FALSE}
 #| label: fig-immuno-OBD4-MTD5
-#| fig-cap: "Dose-DLT, dose-response, and dose-median OS for a immunotherapy-like profile, the OBD is dose 4, which is close to MTD which is dose 5."
-# get dose levels
-# dose selection
-ndose <- 6
-lowest_dose <- 0.1
-dose_levels <- lowest_dose*c(1,2,2*1.65,2*1.65*1.52,
-                             2*1.65*1.52*1.4,2*1.65*1.52*1.4*1.33)
-# parameters for the curves
-k_tox = -3
-L_tox = 0.8
-L_rsp=0.5
-L_surv = 0.6
-a_rsp <- 2
-b_rsp <- 8
-a_surv <- 2
-b_surv <- 8
-scale_surv <- 20
-offset_surv <- 8
-
+#| fig-cap: "Dose-DLT, dose-response, and dose-median OS for a immunotherapy-like profile with a late plateau of efficacy, the OBD is dose 4, which is close to MTD which is dose 5."
 # see the drug profile
+drug_family <- "immuno_late_plateau"
+profile_parameter <- profile_parameter_list[[drug_family]]
 plot_immuno_OBD4 <- plot_drug_profiles(dose_levels = dose_levels,
-                   k_tox=k_tox,L_tox=L_tox,
-                   a_rsp=a_rsp,b_rsp=b_rsp,L_rsp=L_rsp,
-                   a_surv=a_surv,b_surv=b_surv,L_surv=L_surv,
-                   scale_surv=scale_surv,offset_surv=offset_surv,
+                   k_tox=profile_parameter$k_tox,L_tox=profile_parameter$L_tox,
+                   a_rsp=profile_parameter$a_rsp,b_rsp=profile_parameter$b_rsp,
+                   L_rsp=profile_parameter$L_rsp,
+                   a_surv=profile_parameter$a_surv,b_surv=profile_parameter$b_surv,
+                   L_surv=profile_parameter$L_surv,
+                   scale_surv=profile_parameter$scale_surv,
+                   offset_surv=profile_parameter$offset_surv,
                    plot_title = "Immuno-like profile, late plateau")
-```
-
-```{r,echo=FALSE,eval=FALSE}
-# generate individual trial data under this drug profile
-drug_family <- "immuno_fixed_OBD4_MTD5"
-set.seed(1006)
-ndose <- 6
-ndrugs <- 1000
-# store simulated data
-drug_data <- vector(mode = "list",
-                    length = ndrugs)
-N_ph1 <- 30
-N_ph2 <- 300
-N_ph3 <- 500
-DLT_rates <- scaled_logistic_curve(dose_levels,
-                                     k=k,
-                                     L=L_tox)
-rsp_rates <- sigmoid_curve(dose_levels, a= a_rsp,b=b_rsp,L=L_rsp,
-  )
-median_OS <- sigmoid_curve(dose_levels,
-                             a = a_surv, b = b_surv, L = L_surv,
-                             scale = scale_surv,
-                             offset = offset_surv)
-parameter <- c("k"=k,"L_tox"=L_tox,
-               "a_rsp"=a_rsp,"b_rsp"=b_rsp,"L_rsp"=L_rsp,
-               "a_surv" = a_surv,"b_surv" = b_surv,"L_surv"=L_surv)
-# simulate 1000 trial data from this one fixed profile
-for(i in 1:ndrugs)
-{
-  data_ph1_DLT <- gen_DLT(nsim=1,
-                          DLT_rates = DLT_rates,
-                          N = N_ph1)[[1]]
-  data_ph2_DLT <- gen_DLT(nsim=1,
-                          DLT_rates = DLT_rates,
-                          N = N_ph2)[[1]]
-  data_ph3_DLT <- gen_DLT(nsim=1,
-                          DLT_rates = DLT_rates,
-                          N = N_ph3)[[1]]
-  
-  # Response data and survival data
-  data_rsp <- gen_rsp(nsim=1,
-                      rsp_rates = rsp_rates,
-                      N = N_ph2)[[1]]
-  
-  data_surv <- gen_surv(
-    nsim = 1,
-    N = N_ph3,
-    median_surv0 = 14,
-    median_surv1 = median_OS,
-    p_trt = 0.5,
-    maxt = 60
-  )[[1]]
-  profile_info <- list(
-    drug_id = i,
-    dose = dose_levels,
-    DLT_rate = DLT_rates,
-    rsp_rate = rsp_rates,
-    median_OS = median_OS,
-    parameter = parameter
-  )
-  drug_data[[i]] <- list("drug_family"=drug_family,
-                         "profile_info"=profile_info,
-                         "data_ph1_DLT" = data_ph1_DLT,
-                         "data_ph2_DLT" = data_ph2_DLT,
-                         "data_ph3_DLT" = data_ph3_DLT,
-                         "data_rsp" = data_rsp,
-                         "data_surv" = data_surv)
-if (i%%100 == 0) print(i)
-}
-save(drug_data,
-     file = paste0("simulated_data/",drug_family,".RData"))
+plot_immuno_OBD4
 ```
 
 ## Chemo-like drug profiles
 
-In this type of drug profiles (chemo therapies), the efficacy curves parallels with the toxicity curve Namely, increasing to MTD also means increasing efficacy (@fig-chemo-MTD5)
+In this type of drug profiles (chemo therapies), the efficacy curves parallels with the toxicity curve Namely, increasing to MTD also means increasing efficacy. We constructed one profile with flat efficacy increase around the MTD (@fig-chemo-flat) and another with steep efficacy increase around the MTD (@fig-chemo-steep).
 
-```{r}
-#| label: fig-chemo-MTD5
-#| fig-cap: "Dose-DLT, dose-response, and dose-median OS for a chemo-like profile, the MTD is dose 5."
-# get dose levels
-# dose selection
-ndose <- 6
-lowest_dose <- 0.1
-dose_levels <- lowest_dose*c(1,2,2*1.65,2*1.65*1.52,2*1.65*1.52*1.4,2*1.65*1.52*1.4*1.33)
-# parameters for the curves
-k_tox = -3
-L_tox = 0.8
-L_rsp=0.58
-L_surv = 0.68
-k_rsp <- 2
-k_surv <- 2
-scale_surv <- 20
-offset_surv <- 8
-
+```{r,echo=FALSE}
+#| label: fig-chemo-flat
+#| fig-cap: "Dose-DLT, dose-response, and dose-median OS for a chemo-like profile with a flat efficacy increase around the MTD, the MTD is dose 5."
 # see the drug profile
-plot_chemo_MTD5 <- plot_drug_profiles(type="chemo",
+drug_family <- "chemo_flat_efficacy"
+profile_parameter <- profile_parameter_list[[drug_family]]
+plot_chemo_flat <- plot_drug_profiles(type="chemo",
                    dose_levels =dose_levels,
-                   k_tox=k_tox,L_tox=L_tox,
-                   k_rsp = k_rsp,L_rsp =L_rsp,
-                   k_surv=k_surv,L_surv=L_surv,
-                   scale_surv=scale_surv,
-                   offset_surv=offset_surv,
+                   k_tox=profile_parameter$k_tox,L_tox=profile_parameter$L_tox,
+                   k_rsp = profile_parameter$k_rsp,L_rsp =profile_parameter$L_rsp,
+                   k_surv=profile_parameter$k_surv,L_surv=profile_parameter$L_surv,
+                   scale_surv=profile_parameter$scale_surv,
+                   offset_surv=profile_parameter$offset_surv,
                    plot_title = "Chemo-like Profile, flat efficacy")
-plot_chemo_MTD5
-
-# see the drug profile
-k_rsp <- -1
-L_rsp = 0.85
-k_surv <- -1
-L_surv = 1
-plot_chemo_MTD5_steepTRR <- plot_drug_profiles(type="chemo",
-                   dose_levels =dose_levels,
-                   k_tox=k_tox,L_tox=L_tox,
-                   k_rsp = k_rsp,L_rsp =L_rsp,
-                   k_surv=k_surv,L_surv=L_surv,
-                   scale_surv=scale_surv,
-                   offset_surv=offset_surv,
-                   plot_title = "Chemo-like Profile, steep efficacy")
-plot_chemo_MTD5
-plot <- ggarrange(plotlist = list(plot_immuno_OBD3,plot_immuno_OBD4,
-                           plot_chemo_MTD5,plot_chemo_MTD5_steepTRR),ncol=2,nrow=2)
-plot
-# ggsave(filename = paste0("C:\\Users\\ylong\\OneDrive - LUMC\\Projects\\Impacts_early_phase_trial_methods\\plots\\drug_profiles_fixed2.png"),
-#        plot = plot,
-#        dpi=320,
-#        width = 7,
-#        height = 5,
-#        units = "in")
+plot_chemo_flat
 ```
 
+```{r,echo=FALSE}
+#| label: fig-chemo-steep
+#| fig-cap: "Dose-DLT, dose-response, and dose-median OS for a chemo-like profile with a steep efficacy increase around the MTD, the MTD is dose 5."
+# see the drug profile
+drug_family <- "chemo_steep_efficacy"
+profile_parameter <- profile_parameter_list[[drug_family]]
+plot_chemo_steep <- plot_drug_profiles(type="chemo",
+                   dose_levels =dose_levels,
+                   k_tox=profile_parameter$k_tox,L_tox=profile_parameter$L_tox,
+                   k_rsp = profile_parameter$k_rsp,L_rsp =profile_parameter$L_rsp,
+                   k_surv=profile_parameter$k_surv,L_surv=profile_parameter$L_surv,
+                   scale_surv=profile_parameter$scale_surv,
+                   offset_surv=profile_parameter$offset_surv,
+                   plot_title = "Chemo-like Profile, steep efficacy")
+plot_chemo_steep
+```
+
+```{r,echo=FALSE}
+plot_4profiles <- ggarrange(plotlist = list(plot_immuno_OBD3,plot_immuno_OBD4,
+                           plot_chemo_flat,plot_chemo_steep),ncol=2,nrow=2)
+plot_4profiles
+ggsave(filename = paste0("C:\\Users\\ylong\\OneDrive - LUMC\\Projects\\Impacts_early_phase_trial_methods\\plots\\drug_profiles.png"),
+       plot = plot_4profiles,
+       dpi=320,
+       width = 7,
+       height = 5,
+       units = "in")
+```
+
+## Generate individual data for each profile
+
 ```{r,echo=FALSE,eval=FALSE}
-# generate individual trial data under this drug profile
-drug_family <- "chemo_fixed_MTD5_steepTRR"
-set.seed(20260202)
+set.seed(20260303)
 ndose <- 6
 ndrugs <- 1000
+drug_families <- c("immuno_early_plateau", "immuno_late_plateau",
+                   "chemo_flat_efficacy", "chemo_steep_efficacy")
+# generate individual trial data under this drug profile
+for(drug_family in drug_families)
+{
+# extract corresponding simulation parameters
+profile_parameter <- profile_parameter_list[[drug_family]]
 # store simulated data
 drug_data <- vector(mode = "list",
                     length = ndrugs)
@@ -327,20 +190,33 @@ N_ph1 <- 30
 N_ph2 <- 300
 N_ph3 <- 500
 DLT_rates <- scaled_logistic_curve(dose_levels,
-                                     k=k_tox,
-                                     L=L_tox)
+                                     k=profile_parameter$k_tox,
+                                     L=profile_parameter$L_tox)
+if(grepl("immuno",drug_family))
+{
+rsp_rates <- sigmoid_curve(dose_levels,
+                           a= profile_parameter$a_rsp,
+                           b=profile_parameter$b_rsp,
+                           L=profile_parameter$L_rsp)
+median_OS <- sigmoid_curve(dose_levels,
+                           a = profile_parameter$a_surv, 
+                           b = profile_parameter$b_surv, 
+                           L = profile_parameter$L_surv,
+                           scale = profile_parameter$scale_surv,
+                           offset = profile_parameter$offset_surv)
+}
+if(grepl("chemo",drug_family))
+{
 rsp_rates <- scaled_logistic_curve(dose_levels,
-                                      k = k_rsp,
-                                      L=L_rsp)
+                                      k = profile_parameter$k_rsp,
+                                      L=profile_parameter$L_rsp)
 median_OS <- scaled_logistic_curve(dose_levels,
-                                       k=k_surv,
-                                       L=L_surv,
-                                       scale = scale_surv,
-                                       offset = offset_surv)
-parameter <- c("k_tox"=k_tox,"L_tox"=L_tox,
-               "k_rsp" = k_rsp,"L_rsp"=L_rsp,
-               "k_surv" = k_surv,"L_surv"=L_surv)
-# simulate 1000 trial data from this one fixed profile
+                                       k=profile_parameter$k_surv,
+                                       L=profile_parameter$L_surv,
+                                       scale = profile_parameter$scale_surv,
+                                       offset = profile_parameter$offset_surv)
+}
+# simulate 1000 trial data from this profile
 for(i in 1:ndrugs)
 {
   data_ph1_DLT <- gen_DLT(nsim=1,
@@ -371,8 +247,7 @@ for(i in 1:ndrugs)
     dose = dose_levels,
     DLT_rate = DLT_rates,
     rsp_rate = rsp_rates,
-    median_OS = median_OS,
-    parameter = parameter
+    median_OS = median_OS
   )
   drug_data[[i]] <- list("drug_family"=drug_family,
                          "profile_info"=profile_info,
@@ -385,4 +260,5 @@ if (i%%100 == 0) print(i)
 }
 save(drug_data,
      file = paste0("simulated_data/",drug_family,".RData"))
+}
 ```
