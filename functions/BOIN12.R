@@ -35,6 +35,8 @@ DLT_outcome <- c()
 rsp_outcome <- c()
 # vector to store posterior beta parameters
 a_T <- b_T <- a_E <- b_E <- a_U <- b_U <- rep(1,ndoses)
+# prior for utility
+U_prior <- c(1,1)
 # vector to store num of patients assigned to each dose
 num_pts <- rep(0,ndoses)
 # vector to store observed number for 4 outcome combinations
@@ -77,8 +79,8 @@ while (p_id <= N) {
   # update posterior parameters for the standardized utility
   x_thisdose <- ((u1*num_notox_eff + u2*num_notox_noeff+
     u3 * num_tox_eff + u4*num_tox_noeff)/100)[current_dose]
-  a_U[current_dose] <- a_U[current_dose] + x_thisdose
-  b_U[current_dose] <- b_U[current_dose] + num_pts[current_dose] - x_thisdose
+  a_U[current_dose] <- U_prior[1] + x_thisdose
+  b_U[current_dose] <- U_prior[2] + num_pts[current_dose] - x_thisdose
   
   # update desirability for each dose P(u(d) > u_b|data)
   prob_desirable <- pbeta(q=u_b,shape1 = a_U,shape2 = b_U,lower.tail = FALSE)
